@@ -47,6 +47,8 @@ UDisksLinuxPoolObjectZFS *udisks_linux_module_zfs_find_pool_object  (UDisksLinux
 
 GHashTable               *udisks_linux_module_zfs_get_name_to_pool  (UDisksLinuxModuleZFS *module);
 
+void                      udisks_linux_module_zfs_trigger_update    (UDisksLinuxModuleZFS *module);
+
 G_END_DECLS
 
 #endif /* __UDISKS_LINUX_MODULE_ZFS_H__ */

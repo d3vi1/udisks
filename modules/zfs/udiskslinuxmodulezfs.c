@@ -401,6 +401,20 @@ trigger_delayed_zfs_update (UDisksLinuxModuleZFS *module)
     }
 }
 
+/**
+ * udisks_linux_module_zfs_trigger_update:
+ * @module: A #UDisksLinuxModuleZFS.
+ *
+ * Triggers a delayed ZFS pool update.  This should be called after any
+ * state-changing pool operation (create, import, export, destroy, etc.).
+ */
+void
+udisks_linux_module_zfs_trigger_update (UDisksLinuxModuleZFS *module)
+{
+  g_return_if_fail (UDISKS_IS_LINUX_MODULE_ZFS (module));
+  trigger_delayed_zfs_update (module);
+}
+
 static gboolean
 has_zfs_member_label (UDisksLinuxDevice *device)
 {

@@ -19,14 +19,20 @@
 
 #include "config.h"
 
-#include <glib/gi18n.h>
+#include <glib/gi18n-lib.h>
+#include <string.h>
+
+#include <blockdev/zfs.h>
+#include <blockdev/utils.h>
 
 #include <src/udisksdaemon.h>
 #include <src/udisksdaemonutil.h>
 #include <src/udiskslogging.h>
 
+#include "udiskszfstypes.h"
 #include "udiskslinuxmanagerzfs.h"
 #include "udiskslinuxmodulezfs.h"
+#include "udiskslinuxpoolobjectzfs.h"
 
 /**
  * SECTION:udiskslinuxmanagerzfs
@@ -180,45 +186,313 @@ udisks_linux_manager_zfs_get_module (UDisksLinuxManagerZFS *manager)
 
 /* ---------------------------------------------------------------------------------------------------- */
 
+/**
+ * resolve_blocks_to_device_paths:
+ * @daemon: A #UDisksDaemon.
+ * @arg_blocks: NULL-terminated array of D-Bus object paths.
+ * @invocation: The method invocation (for error reporting).
+ * @out_n_devices: (out): Number of resolved devices.
+ *
+ * Resolves an array of D-Bus object paths to device paths.
+ *
+ * Returns: (transfer full): A NULL-terminated array of device path strings,
+ *   or %NULL on error (in which case an error has been returned on @invocation).
+ *   Free with g_strfreev().
+ */
+static gchar **
+resolve_blocks_to_device_paths (UDisksDaemon          *daemon,
+                                const gchar *const    *arg_blocks,
+                                GDBusMethodInvocation *invocation,
+                                guint                 *out_n_devices)
+{
+  guint n;
+  guint count;
+  GPtrArray *devices;
+
+  /* Count the blocks */
+  for (count = 0; arg_blocks != NULL && arg_blocks[count] != NULL; count++)
+    ;
+
+  if (count == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "List of block devices is empty");
+      return NULL;
+    }
+
+  devices = g_ptr_array_new_with_free_func (g_free);
+
+  for (n = 0; n < count; n++)
+    {
+      UDisksObject *object = NULL;
+      UDisksBlock *block = NULL;
+
+      object = udisks_daemon_find_object (daemon, arg_blocks[n]);
+      if (object == NULL)
+        {
+          g_dbus_method_invocation_return_error (invocation,
+                                                 UDISKS_ERROR,
+                                                 UDISKS_ERROR_FAILED,
+                                                 "Invalid object path %s at index %u",
+                                                 arg_blocks[n], n);
+          g_ptr_array_unref (devices);
+          return NULL;
+        }
+
+      block = udisks_object_get_block (object);
+      if (block == NULL)
+        {
+          g_dbus_method_invocation_return_error (invocation,
+                                                 UDISKS_ERROR,
+                                                 UDISKS_ERROR_FAILED,
+                                                 "Object path %s at index %u is not a block device",
+                                                 arg_blocks[n], n);
+          g_object_unref (object);
+          g_ptr_array_unref (devices);
+          return NULL;
+        }
+
+      g_ptr_array_add (devices, udisks_block_dup_device (block));
+      g_object_unref (block);
+      g_object_unref (object);
+    }
+
+  g_ptr_array_add (devices, NULL);
+
+  if (out_n_devices != NULL)
+    *out_n_devices = count;
+
+  return (gchar **) g_ptr_array_free (devices, FALSE);
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+typedef struct
+{
+  UDisksLinuxModuleZFS *module;
+  const gchar *name;
+} WaitForPoolObjectData;
+
+static UDisksObject *
+wait_for_pool_object (UDisksDaemon *daemon,
+                      gpointer      user_data)
+{
+  WaitForPoolObjectData *data = user_data;
+  UDisksLinuxPoolObjectZFS *object;
+
+  object = udisks_linux_module_zfs_find_pool_object (data->module, data->name);
+
+  if (object == NULL)
+    return NULL;
+
+  return g_object_ref (UDISKS_OBJECT (object));
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
 static gboolean
-handle_pool_create (UDisksManagerZFS      *manager,
+handle_pool_create (UDisksManagerZFS      *_manager,
                     GDBusMethodInvocation *invocation,
                     const gchar           *arg_name,
                     const gchar *const    *arg_blocks,
                     const gchar           *arg_vdev_type,
                     GVariant              *arg_options)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Method not yet implemented");
+  UDisksLinuxManagerZFS *manager = UDISKS_LINUX_MANAGER_ZFS (_manager);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  gchar **device_paths = NULL;
+  UDisksObject *pool_object = NULL;
+  WaitForPoolObjectData wait_data;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (manager->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     NULL,
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to create a ZFS pool"),
+                                     invocation);
+
+  /* Validate pool name */
+  if (arg_name == NULL || strlen (arg_name) == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Pool name must not be empty");
+      goto out;
+    }
+
+  /* Resolve block object paths to device paths */
+  device_paths = resolve_blocks_to_device_paths (daemon, arg_blocks, invocation, NULL);
+  if (device_paths == NULL)
+    goto out;
+
+  /* Create the pool */
+  if (!bd_zfs_pool_create (arg_name,
+                           (const gchar **) device_paths,
+                           arg_vdev_type,
+                           NULL, /* properties */
+                           &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  /* Trigger update so the new pool object appears */
+  udisks_linux_module_zfs_trigger_update (manager->module);
+
+  /* Wait for the pool object to show up */
+  wait_data.module = manager->module;
+  wait_data.name = arg_name;
+  pool_object = udisks_daemon_wait_for_object_sync (daemon,
+                                                     wait_for_pool_object,
+                                                     &wait_data,
+                                                     NULL,
+                                                     UDISKS_DEFAULT_WAIT_TIMEOUT,
+                                                     &error);
+  if (pool_object == NULL)
+    {
+      g_prefix_error (&error,
+                      "Error waiting for pool object for '%s': ",
+                      arg_name);
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_manager_zfs_complete_pool_create (_manager,
+                                           invocation,
+                                           g_dbus_object_get_object_path (G_DBUS_OBJECT (pool_object)));
+
+ out:
+  g_strfreev (device_paths);
+  g_clear_object (&pool_object);
   return TRUE;
 }
 
+/* ---------------------------------------------------------------------------------------------------- */
+
 static gboolean
-handle_pool_import (UDisksManagerZFS      *manager,
+handle_pool_import (UDisksManagerZFS      *_manager,
                     GDBusMethodInvocation *invocation,
                     const gchar           *arg_name_or_guid,
                     GVariant              *arg_options)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Method not yet implemented");
+  UDisksLinuxManagerZFS *manager = UDISKS_LINUX_MANAGER_ZFS (_manager);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  gboolean force = FALSE;
+  UDisksObject *pool_object = NULL;
+  WaitForPoolObjectData wait_data;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (manager->module));
+
+  g_variant_lookup (arg_options, "force", "b", &force);
+
+  /* Use the destroy policy for force imports, regular policy otherwise */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     NULL,
+                                     force ? ZFS_POLICY_ACTION_ID_DESTROY : ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to import a ZFS pool"),
+                                     invocation);
+
+  if (arg_name_or_guid == NULL || strlen (arg_name_or_guid) == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Pool name or GUID must not be empty");
+      goto out;
+    }
+
+  /* Import the pool */
+  if (!bd_zfs_pool_import (arg_name_or_guid,
+                           NULL, /* altroot */
+                           NULL, /* properties */
+                           force,
+                           NULL, /* extra args */
+                           &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  /* Trigger update so the imported pool object appears */
+  udisks_linux_module_zfs_trigger_update (manager->module);
+
+  /* Wait for the pool object to show up */
+  wait_data.module = manager->module;
+  wait_data.name = arg_name_or_guid;
+  pool_object = udisks_daemon_wait_for_object_sync (daemon,
+                                                     wait_for_pool_object,
+                                                     &wait_data,
+                                                     NULL,
+                                                     UDISKS_DEFAULT_WAIT_TIMEOUT,
+                                                     &error);
+  if (pool_object == NULL)
+    {
+      g_prefix_error (&error,
+                      "Error waiting for pool object for '%s': ",
+                      arg_name_or_guid);
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_manager_zfs_complete_pool_import (_manager,
+                                           invocation,
+                                           g_dbus_object_get_object_path (G_DBUS_OBJECT (pool_object)));
+
+ out:
+  g_clear_object (&pool_object);
   return TRUE;
 }
 
+/* ---------------------------------------------------------------------------------------------------- */
+
 static gboolean
-handle_pool_import_all (UDisksManagerZFS      *manager,
+handle_pool_import_all (UDisksManagerZFS      *_manager,
                         GDBusMethodInvocation *invocation,
                         GVariant              *arg_options)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Method not yet implemented");
+  UDisksLinuxManagerZFS *manager = UDISKS_LINUX_MANAGER_ZFS (_manager);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  const gchar *argv[] = { "zpool", "import", "-a", NULL };
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (manager->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     NULL,
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to import all ZFS pools"),
+                                     invocation);
+
+  /* There is no single libblockdev call for "import all"; invoke zpool
+   * directly.  bd_utils_exec_and_report_error runs the command
+   * synchronously and populates @error on failure. */
+  if (!bd_utils_exec_and_report_error (argv, NULL, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  /* Trigger update so newly imported pool objects appear */
+  udisks_linux_module_zfs_trigger_update (manager->module);
+
+  udisks_manager_zfs_complete_pool_import_all (_manager, invocation);
+
+ out:
   return TRUE;
 }
+
+/* ---------------------------------------------------------------------------------------------------- */
 
 static void
 udisks_linux_manager_zfs_iface_init (UDisksManagerZFSIface *iface)
