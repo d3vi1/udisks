@@ -42,6 +42,11 @@ UDisksModule           *udisks_module_zfs_new              (UDisksDaemon  *daemo
                                                             GCancellable  *cancellable,
                                                             GError       **error);
 
+UDisksLinuxPoolObjectZFS *udisks_linux_module_zfs_find_pool_object  (UDisksLinuxModuleZFS *module,
+                                                                     const gchar          *name);
+
+GHashTable               *udisks_linux_module_zfs_get_name_to_pool  (UDisksLinuxModuleZFS *module);
+
 G_END_DECLS
 
 #endif /* __UDISKS_LINUX_MODULE_ZFS_H__ */
