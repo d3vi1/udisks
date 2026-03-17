@@ -22,10 +22,13 @@
 
 #include <string.h>
 
+#include <blockdev/zfs.h>
+
 #include <src/udiskslogging.h>
 #include <src/udisksdaemon.h>
 #include <src/udisksdaemonutil.h>
 
+#include "udiskszfstypes.h"
 #include "udiskslinuxpoolobjectzfs.h"
 #include "udiskslinuxmodulezfs.h"
 
@@ -162,6 +165,712 @@ pool_state_to_string (BDZFSPoolState state)
     }
 }
 
+/* ---------------------------------------------------------------------------------------------------- */
+/*  Helpers for ZFSPool method handlers                                                                */
+/* ---------------------------------------------------------------------------------------------------- */
+
+/**
+ * resolve_blocks_to_device_paths:
+ * @daemon: A #UDisksDaemon.
+ * @arg_blocks: NULL-terminated array of D-Bus object paths.
+ * @invocation: The method invocation (for error reporting).
+ *
+ * Resolves an array of D-Bus object paths to device path strings.
+ *
+ * Returns: (transfer full): A NULL-terminated array of device path strings,
+ *   or %NULL on error (in which case an error has been returned on @invocation).
+ *   Free with g_strfreev().
+ */
+static gchar **
+pool_resolve_blocks_to_device_paths (UDisksDaemon          *daemon,
+                                     const gchar *const    *arg_blocks,
+                                     GDBusMethodInvocation *invocation)
+{
+  guint n;
+  guint count;
+  GPtrArray *devices;
+
+  for (count = 0; arg_blocks != NULL && arg_blocks[count] != NULL; count++)
+    ;
+
+  if (count == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "List of block devices is empty");
+      return NULL;
+    }
+
+  devices = g_ptr_array_new_with_free_func (g_free);
+
+  for (n = 0; n < count; n++)
+    {
+      UDisksObject *obj = NULL;
+      UDisksBlock *block = NULL;
+
+      obj = udisks_daemon_find_object (daemon, arg_blocks[n]);
+      if (obj == NULL)
+        {
+          g_dbus_method_invocation_return_error (invocation,
+                                                 UDISKS_ERROR,
+                                                 UDISKS_ERROR_FAILED,
+                                                 "Invalid object path %s at index %u",
+                                                 arg_blocks[n], n);
+          g_ptr_array_unref (devices);
+          return NULL;
+        }
+
+      block = udisks_object_get_block (obj);
+      if (block == NULL)
+        {
+          g_dbus_method_invocation_return_error (invocation,
+                                                 UDISKS_ERROR,
+                                                 UDISKS_ERROR_FAILED,
+                                                 "Object path %s at index %u is not a block device",
+                                                 arg_blocks[n], n);
+          g_object_unref (obj);
+          g_ptr_array_unref (devices);
+          return NULL;
+        }
+
+      g_ptr_array_add (devices, udisks_block_dup_device (block));
+      g_object_unref (block);
+      g_object_unref (obj);
+    }
+
+  g_ptr_array_add (devices, NULL);
+  return (gchar **) g_ptr_array_free (devices, FALSE);
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+/*  ZFSPool D-Bus method handlers                                                                       */
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_poll (UDisksZFSPool         *iface,
+             GDBusMethodInvocation *invocation,
+             gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_poll (iface, invocation);
+
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_export (UDisksZFSPool         *iface,
+               GDBusMethodInvocation *invocation,
+               gboolean               arg_force,
+               GVariant              *arg_options,
+               gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to export a ZFS pool"),
+                                     invocation);
+
+  if (!bd_zfs_pool_export (object->name, arg_force, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_export (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_destroy (UDisksZFSPool         *iface,
+                GDBusMethodInvocation *invocation,
+                gboolean               arg_force,
+                GVariant              *arg_options,
+                gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Destruction requires the stronger manage-zfs-destroy policy */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_DESTROY,
+                                     arg_options,
+                                     N_("Authentication is required to destroy a ZFS pool"),
+                                     invocation);
+
+  if (!bd_zfs_pool_destroy (object->name, arg_force, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_destroy (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_add_vdev (UDisksZFSPool         *iface,
+                 GDBusMethodInvocation *invocation,
+                 const gchar           *arg_vdev_type,
+                 const gchar *const    *arg_blocks,
+                 GVariant              *arg_options,
+                 gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  gchar **device_paths = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to add a vdev to a ZFS pool"),
+                                     invocation);
+
+  /* Resolve block object paths to device paths */
+  device_paths = pool_resolve_blocks_to_device_paths (daemon, arg_blocks, invocation);
+  if (device_paths == NULL)
+    goto out;
+
+  if (!bd_zfs_pool_add_vdev (object->name,
+                             (const gchar **) device_paths,
+                             arg_vdev_type,
+                             NULL, /* extra args */
+                             &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_add_vdev (iface, invocation);
+
+ out:
+  g_strfreev (device_paths);
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_remove_vdev (UDisksZFSPool         *iface,
+                    GDBusMethodInvocation *invocation,
+                    const gchar           *arg_device,
+                    GVariant              *arg_options,
+                    gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to remove a vdev from a ZFS pool"),
+                                     invocation);
+
+  if (!bd_zfs_pool_remove_vdev (object->name, arg_device, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_remove_vdev (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_scrub_start (UDisksZFSPool         *iface,
+                    GDBusMethodInvocation *invocation,
+                    GVariant              *arg_options,
+                    gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to scrub a ZFS pool"),
+                                     invocation);
+
+  if (!bd_zfs_pool_scrub_start (object->name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_scrub_start (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_scrub_pause (UDisksZFSPool         *iface,
+                    GDBusMethodInvocation *invocation,
+                    GVariant              *arg_options,
+                    gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to pause a ZFS pool scrub"),
+                                     invocation);
+
+  if (!bd_zfs_pool_scrub_pause (object->name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_scrub_pause (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_scrub_stop (UDisksZFSPool         *iface,
+                   GDBusMethodInvocation *invocation,
+                   GVariant              *arg_options,
+                   gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to stop a ZFS pool scrub"),
+                                     invocation);
+
+  if (!bd_zfs_pool_scrub_stop (object->name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_scrub_stop (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_trim_start (UDisksZFSPool         *iface,
+                   GDBusMethodInvocation *invocation,
+                   GVariant              *arg_options,
+                   gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to TRIM a ZFS pool"),
+                                     invocation);
+
+  if (!bd_zfs_pool_trim_start (object->name, NULL, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_trim_start (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_set_property (UDisksZFSPool         *iface,
+                     GDBusMethodInvocation *invocation,
+                     const gchar           *arg_name,
+                     const gchar           *arg_value,
+                     GVariant              *arg_options,
+                     gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to set a ZFS pool property"),
+                                     invocation);
+
+  if (arg_name == NULL || strlen (arg_name) == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Property name must not be empty");
+      goto out;
+    }
+
+  if (!bd_zfs_pool_set_property (object->name, arg_name, arg_value, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_set_property (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_get_property (UDisksZFSPool         *iface,
+                     GDBusMethodInvocation *invocation,
+                     const gchar           *arg_name,
+                     GVariant              *arg_options,
+                     gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  BDZFSPropertyInfo *prop_info = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_QUERY,
+                                     arg_options,
+                                     N_("Authentication is required to query a ZFS pool property"),
+                                     invocation);
+
+  if (arg_name == NULL || strlen (arg_name) == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Property name must not be empty");
+      goto out;
+    }
+
+  prop_info = bd_zfs_pool_get_property (object->name, arg_name, &error);
+  if (prop_info == NULL)
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_zfspool_complete_get_property (iface,
+                                        invocation,
+                                        prop_info->value ? prop_info->value : "",
+                                        prop_info->source ? prop_info->source : "");
+  bd_zfs_property_info_free (prop_info);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_create_dataset (UDisksZFSPool         *iface,
+                       GDBusMethodInvocation *invocation,
+                       const gchar           *arg_name,
+                       GVariant              *arg_options,
+                       gpointer               user_data)
+{
+  /* Dataset management will be fully implemented in a later unit (U5).
+   * Return NotSupported for now. */
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Dataset management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_create_volume (UDisksZFSPool         *iface,
+                      GDBusMethodInvocation *invocation,
+                      const gchar           *arg_name,
+                      guint64                arg_size,
+                      GVariant              *arg_options,
+                      gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Volume management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_list_datasets (UDisksZFSPool         *iface,
+                      GDBusMethodInvocation *invocation,
+                      GVariant              *arg_options,
+                      gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Dataset listing not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_destroy_dataset (UDisksZFSPool         *iface,
+                        GDBusMethodInvocation *invocation,
+                        const gchar           *arg_name,
+                        gboolean               arg_recursive,
+                        GVariant              *arg_options,
+                        gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Dataset management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_mount_dataset (UDisksZFSPool         *iface,
+                      GDBusMethodInvocation *invocation,
+                      const gchar           *arg_name,
+                      GVariant              *arg_options,
+                      gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Dataset management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_unmount_dataset (UDisksZFSPool         *iface,
+                        GDBusMethodInvocation *invocation,
+                        const gchar           *arg_name,
+                        gboolean               arg_force,
+                        GVariant              *arg_options,
+                        gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Dataset management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_create_snapshot (UDisksZFSPool         *iface,
+                        GDBusMethodInvocation *invocation,
+                        const gchar           *arg_dataset,
+                        const gchar           *arg_snap_name,
+                        gboolean               arg_recursive,
+                        GVariant              *arg_options,
+                        gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Snapshot management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_rollback_snapshot (UDisksZFSPool         *iface,
+                          GDBusMethodInvocation *invocation,
+                          const gchar           *arg_name,
+                          GVariant              *arg_options,
+                          gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Snapshot management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_clone_snapshot (UDisksZFSPool         *iface,
+                       GDBusMethodInvocation *invocation,
+                       const gchar           *arg_snapshot,
+                       const gchar           *arg_clone_name,
+                       GVariant              *arg_options,
+                       gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Snapshot management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_rename_dataset (UDisksZFSPool         *iface,
+                       GDBusMethodInvocation *invocation,
+                       const gchar           *arg_name,
+                       const gchar           *arg_new_name,
+                       GVariant              *arg_options,
+                       gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Dataset management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_set_dataset_property (UDisksZFSPool         *iface,
+                             GDBusMethodInvocation *invocation,
+                             const gchar           *arg_dataset,
+                             const gchar           *arg_property,
+                             const gchar           *arg_value,
+                             GVariant              *arg_options,
+                             gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Dataset management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_get_dataset_property (UDisksZFSPool         *iface,
+                             GDBusMethodInvocation *invocation,
+                             const gchar           *arg_dataset,
+                             const gchar           *arg_property,
+                             GVariant              *arg_options,
+                             gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Dataset management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_load_key (UDisksZFSPool         *iface,
+                 GDBusMethodInvocation *invocation,
+                 const gchar           *arg_dataset,
+                 GVariant              *arg_options,
+                 gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Encryption key management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_unload_key (UDisksZFSPool         *iface,
+                   GDBusMethodInvocation *invocation,
+                   const gchar           *arg_dataset,
+                   GVariant              *arg_options,
+                   gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Encryption key management not yet implemented");
+  return TRUE;
+}
+
+static gboolean
+handle_change_key (UDisksZFSPool         *iface,
+                   GDBusMethodInvocation *invocation,
+                   const gchar           *arg_dataset,
+                   GVariant              *arg_options,
+                   gpointer               user_data)
+{
+  g_dbus_method_invocation_return_error (invocation,
+                                         G_DBUS_ERROR,
+                                         G_DBUS_ERROR_NOT_SUPPORTED,
+                                         "Encryption key management not yet implemented");
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
 static void
 udisks_linux_pool_object_zfs_constructed (GObject *_object)
 {
@@ -179,6 +888,67 @@ udisks_linux_pool_object_zfs_constructed (GObject *_object)
 
   /* create the D-Bus interface */
   object->iface_zfs_pool = udisks_zfspool_skeleton_new ();
+
+  /* allow method invocations to be handled in a worker thread */
+  g_dbus_interface_skeleton_set_flags (G_DBUS_INTERFACE_SKELETON (object->iface_zfs_pool),
+                                       G_DBUS_INTERFACE_SKELETON_FLAGS_HANDLE_METHOD_INVOCATIONS_IN_THREAD);
+
+  /* connect ZFSPool method handlers */
+  g_signal_connect (object->iface_zfs_pool, "handle-poll",
+                    G_CALLBACK (handle_poll), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-export",
+                    G_CALLBACK (handle_export), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-destroy",
+                    G_CALLBACK (handle_destroy), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-add-vdev",
+                    G_CALLBACK (handle_add_vdev), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-remove-vdev",
+                    G_CALLBACK (handle_remove_vdev), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-scrub-start",
+                    G_CALLBACK (handle_scrub_start), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-scrub-pause",
+                    G_CALLBACK (handle_scrub_pause), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-scrub-stop",
+                    G_CALLBACK (handle_scrub_stop), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-trim-start",
+                    G_CALLBACK (handle_trim_start), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-set-property",
+                    G_CALLBACK (handle_set_property), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-get-property",
+                    G_CALLBACK (handle_get_property), object);
+
+  /* Dataset/snapshot/encryption methods — stubs for now */
+  g_signal_connect (object->iface_zfs_pool, "handle-create-dataset",
+                    G_CALLBACK (handle_create_dataset), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-create-volume",
+                    G_CALLBACK (handle_create_volume), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-list-datasets",
+                    G_CALLBACK (handle_list_datasets), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-destroy-dataset",
+                    G_CALLBACK (handle_destroy_dataset), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-mount-dataset",
+                    G_CALLBACK (handle_mount_dataset), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-unmount-dataset",
+                    G_CALLBACK (handle_unmount_dataset), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-create-snapshot",
+                    G_CALLBACK (handle_create_snapshot), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-rollback-snapshot",
+                    G_CALLBACK (handle_rollback_snapshot), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-clone-snapshot",
+                    G_CALLBACK (handle_clone_snapshot), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-rename-dataset",
+                    G_CALLBACK (handle_rename_dataset), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-set-dataset-property",
+                    G_CALLBACK (handle_set_dataset_property), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-get-dataset-property",
+                    G_CALLBACK (handle_get_dataset_property), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-load-key",
+                    G_CALLBACK (handle_load_key), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-unload-key",
+                    G_CALLBACK (handle_unload_key), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-change-key",
+                    G_CALLBACK (handle_change_key), object);
+
   g_dbus_object_skeleton_add_interface (G_DBUS_OBJECT_SKELETON (object),
                                         G_DBUS_INTERFACE_SKELETON (object->iface_zfs_pool));
 }
