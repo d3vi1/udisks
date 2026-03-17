@@ -8,6 +8,7 @@
 
 %define with_btrfs                      1
 %define with_lsm                        1
+%define with_zfs                        1
 
 %define is_fedora                       0%{?rhel} == 0
 %define is_git                          %(git show > /dev/null 2>&1 && echo 1 || echo 0)
@@ -172,6 +173,18 @@ Obsoletes: storaged-btrfs < %{version}-%{release}
 This package contains module for BTRFS configuration.
 %endif
 
+%if 0%{?with_zfs}
+%package -n %{name}-zfs
+Summary: Module for ZFS
+Requires: %{name}%{?_isa} = %{version}-%{release}
+License: LGPL-2.0-or-later
+Requires: libblockdev-zfs >= %{libblockdev_version}
+BuildRequires: libblockdev-zfs-devel >= %{libblockdev_version}
+
+%description -n %{name}-zfs
+This package contains module for ZFS pool and dataset management.
+%endif
+
 %if 0%{?with_lsm}
 %package -n %{name}-lsm
 Summary: Module for LSM
@@ -205,6 +218,9 @@ autoreconf -ivf
 %endif
 %if 0%{?with_lsm}
     --enable-lsm      \
+%endif
+%if 0%{?with_zfs}
+    --enable-zfs      \
 %endif
     --enable-lvm2     \
     --enable-iscsi
@@ -309,6 +325,9 @@ fi
 %if 0%{?with_btrfs}
 %{_libdir}/pkgconfig/udisks2-btrfs.pc
 %endif
+%if 0%{?with_zfs}
+%{_libdir}/pkgconfig/udisks2-zfs.pc
+%endif
 %if 0%{?with_lsm}
 %{_libdir}/pkgconfig/udisks2-lsm.pc
 %endif
@@ -317,6 +336,12 @@ fi
 %files -n %{name}-btrfs
 %{_libdir}/udisks2/modules/libudisks2_btrfs.so
 %{_datadir}/polkit-1/actions/org.freedesktop.UDisks2.btrfs.policy
+%endif
+
+%if 0%{?with_zfs}
+%files -n %{name}-zfs
+%{_libdir}/udisks2/modules/libudisks2_zfs.so
+%{_datadir}/polkit-1/actions/org.freedesktop.UDisks2.zfs.policy
 %endif
 
 %if 0%{?with_lsm}
