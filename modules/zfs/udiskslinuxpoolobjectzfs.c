@@ -655,12 +655,34 @@ handle_create_dataset (UDisksZFSPool         *iface,
                        GVariant              *arg_options,
                        gpointer               user_data)
 {
-  /* Dataset management will be fully implemented in a later unit (U5).
-   * Return NotSupported for now. */
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Dataset management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  gchar *full_name = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to create a ZFS dataset"),
+                                     invocation);
+
+  full_name = g_strdup_printf ("%s/%s", object->name, arg_name);
+
+  if (!bd_zfs_dataset_create (full_name, NULL, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_create_dataset (iface, invocation, full_name);
+
+ out:
+  g_free (full_name);
   return TRUE;
 }
 
@@ -672,10 +694,34 @@ handle_create_volume (UDisksZFSPool         *iface,
                       GVariant              *arg_options,
                       gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Volume management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  gchar *full_name = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to create a ZFS volume"),
+                                     invocation);
+
+  full_name = g_strdup_printf ("%s/%s", object->name, arg_name);
+
+  if (!bd_zfs_zvol_create (full_name, arg_size, FALSE, NULL, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_create_volume (iface, invocation, full_name);
+
+ out:
+  g_free (full_name);
   return TRUE;
 }
 
@@ -685,10 +731,145 @@ handle_list_datasets (UDisksZFSPool         *iface,
                       GVariant              *arg_options,
                       gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Dataset listing not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  BDZFSDatasetInfo **infos = NULL;
+  gboolean recursive = FALSE;
+  const gchar *type_filter = NULL;
+  gint64 offset = 0;
+  gint64 limit = -1;
+  GVariantBuilder datasets_builder;
+  gint64 count;
+  gint64 idx;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_QUERY,
+                                     arg_options,
+                                     N_("Authentication is required to list ZFS datasets"),
+                                     invocation);
+
+  /* Extract options */
+  g_variant_lookup (arg_options, "recursive", "b", &recursive);
+  g_variant_lookup (arg_options, "type", "&s", &type_filter);
+  g_variant_lookup (arg_options, "offset", "x", &offset);
+  g_variant_lookup (arg_options, "limit", "x", &limit);
+
+  infos = bd_zfs_dataset_list (object->name, recursive, &error);
+  if (infos == NULL)
+    {
+      /* NULL with no error means empty list */
+      if (error != NULL)
+        {
+          g_dbus_method_invocation_take_error (invocation, error);
+          goto out;
+        }
+    }
+
+  g_variant_builder_init (&datasets_builder, G_VARIANT_TYPE ("aa{sv}"));
+
+  count = 0;
+  idx = 0;
+
+  if (infos != NULL)
+    {
+      for (BDZFSDatasetInfo **p = infos; *p != NULL; p++)
+        {
+          BDZFSDatasetInfo *info = *p;
+          GVariantBuilder dict_builder;
+          const gchar *type_str = "filesystem";
+
+          switch (info->type)
+            {
+            case BD_ZFS_DATASET_TYPE_VOLUME:
+              type_str = "volume";
+              break;
+            case BD_ZFS_DATASET_TYPE_SNAPSHOT:
+              type_str = "snapshot";
+              break;
+            case BD_ZFS_DATASET_TYPE_BOOKMARK:
+              type_str = "bookmark";
+              break;
+            default:
+              break;
+            }
+
+          /* Apply type filter if specified */
+          if (type_filter != NULL && g_strcmp0 (type_filter, type_str) != 0)
+            continue;
+
+          /* Apply offset */
+          if (idx < offset)
+            {
+              idx++;
+              continue;
+            }
+          idx++;
+
+          /* Apply limit */
+          if (limit >= 0 && count >= limit)
+            break;
+
+          g_variant_builder_init (&dict_builder, G_VARIANT_TYPE ("a{sv}"));
+
+          g_variant_builder_add (&dict_builder, "{sv}", "name",
+                                 g_variant_new_string (info->name));
+          g_variant_builder_add (&dict_builder, "{sv}", "type",
+                                 g_variant_new_string (type_str));
+
+          if (info->mountpoint)
+            g_variant_builder_add (&dict_builder, "{sv}", "mountpoint",
+                                   g_variant_new_string (info->mountpoint));
+          g_variant_builder_add (&dict_builder, "{sv}", "mounted",
+                                 g_variant_new_boolean (info->mounted));
+          g_variant_builder_add (&dict_builder, "{sv}", "used",
+                                 g_variant_new_uint64 (info->used));
+          g_variant_builder_add (&dict_builder, "{sv}", "available",
+                                 g_variant_new_uint64 (info->available));
+          g_variant_builder_add (&dict_builder, "{sv}", "referenced",
+                                 g_variant_new_uint64 (info->referenced));
+
+          if (info->compression)
+            g_variant_builder_add (&dict_builder, "{sv}", "compression",
+                                   g_variant_new_string (info->compression));
+          if (info->encryption)
+            g_variant_builder_add (&dict_builder, "{sv}", "encryption",
+                                   g_variant_new_string (info->encryption));
+          if (info->origin)
+            g_variant_builder_add (&dict_builder, "{sv}", "origin",
+                                   g_variant_new_string (info->origin));
+
+          {
+            const gchar *ks = "none";
+            if (info->key_status == BD_ZFS_KEY_STATUS_AVAILABLE)
+              ks = "available";
+            else if (info->key_status == BD_ZFS_KEY_STATUS_UNAVAILABLE)
+              ks = "unavailable";
+            g_variant_builder_add (&dict_builder, "{sv}", "key-status",
+                                   g_variant_new_string (ks));
+          }
+
+          g_variant_builder_add (&datasets_builder, "a{sv}", &dict_builder);
+          count++;
+        }
+    }
+
+  udisks_zfspool_complete_list_datasets (UDISKS_ZFSPOOL (iface), invocation,
+                                         g_variant_builder_end (&datasets_builder));
+
+  /* Free the info array */
+  if (infos != NULL)
+    {
+      for (BDZFSDatasetInfo **p = infos; *p != NULL; p++)
+        bd_zfs_dataset_info_free (*p);
+      g_free (infos);
+    }
+
+ out:
   return TRUE;
 }
 
@@ -700,10 +881,30 @@ handle_destroy_dataset (UDisksZFSPool         *iface,
                         GVariant              *arg_options,
                         gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Dataset management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Destruction requires the stronger manage-zfs-destroy policy */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_DESTROY,
+                                     arg_options,
+                                     N_("Authentication is required to destroy a ZFS dataset"),
+                                     invocation);
+
+  if (!bd_zfs_dataset_destroy (arg_name, arg_recursive, FALSE, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_destroy_dataset (iface, invocation);
+
+ out:
   return TRUE;
 }
 
@@ -714,10 +915,30 @@ handle_mount_dataset (UDisksZFSPool         *iface,
                       GVariant              *arg_options,
                       gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Dataset management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to mount a ZFS dataset"),
+                                     invocation);
+
+  if (!bd_zfs_dataset_mount (arg_name, NULL, NULL, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_mount_dataset (iface, invocation);
+
+ out:
   return TRUE;
 }
 
@@ -729,10 +950,30 @@ handle_unmount_dataset (UDisksZFSPool         *iface,
                         GVariant              *arg_options,
                         gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Dataset management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to unmount a ZFS dataset"),
+                                     invocation);
+
+  if (!bd_zfs_dataset_unmount (arg_name, arg_force, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_unmount_dataset (iface, invocation);
+
+ out:
   return TRUE;
 }
 
@@ -789,10 +1030,30 @@ handle_rename_dataset (UDisksZFSPool         *iface,
                        GVariant              *arg_options,
                        gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Dataset management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to rename a ZFS dataset"),
+                                     invocation);
+
+  if (!bd_zfs_dataset_rename (arg_name, arg_new_name, FALSE, FALSE, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_rename_dataset (iface, invocation);
+
+ out:
   return TRUE;
 }
 
@@ -805,10 +1066,39 @@ handle_set_dataset_property (UDisksZFSPool         *iface,
                              GVariant              *arg_options,
                              gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Dataset management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check — security-sensitive property allowlist deferred to U9 */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to set a ZFS dataset property"),
+                                     invocation);
+
+  if (arg_property == NULL || strlen (arg_property) == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Property name must not be empty");
+      goto out;
+    }
+
+  if (!bd_zfs_dataset_set_property (arg_dataset, arg_property, arg_value, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_set_dataset_property (iface, invocation);
+
+ out:
   return TRUE;
 }
 
@@ -820,10 +1110,44 @@ handle_get_dataset_property (UDisksZFSPool         *iface,
                              GVariant              *arg_options,
                              gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Dataset management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  BDZFSPropertyInfo *prop_info = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_QUERY,
+                                     arg_options,
+                                     N_("Authentication is required to query a ZFS dataset property"),
+                                     invocation);
+
+  if (arg_property == NULL || strlen (arg_property) == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Property name must not be empty");
+      goto out;
+    }
+
+  prop_info = bd_zfs_dataset_get_property (arg_dataset, arg_property, &error);
+  if (prop_info == NULL)
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_zfspool_complete_get_dataset_property (iface,
+                                                invocation,
+                                                prop_info->value ? prop_info->value : "",
+                                                prop_info->source ? prop_info->source : "");
+  bd_zfs_property_info_free (prop_info);
+
+ out:
   return TRUE;
 }
 
@@ -917,7 +1241,7 @@ udisks_linux_pool_object_zfs_constructed (GObject *_object)
   g_signal_connect (object->iface_zfs_pool, "handle-get-property",
                     G_CALLBACK (handle_get_property), object);
 
-  /* Dataset/snapshot/encryption methods — stubs for now */
+  /* Dataset management methods */
   g_signal_connect (object->iface_zfs_pool, "handle-create-dataset",
                     G_CALLBACK (handle_create_dataset), object);
   g_signal_connect (object->iface_zfs_pool, "handle-create-volume",
