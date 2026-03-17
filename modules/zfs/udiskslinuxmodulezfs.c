@@ -30,10 +30,14 @@
 #include <src/udisksmodule.h>
 #include <src/udisksmoduleobject.h>
 
+#include <src/udiskslinuxblockobject.h>
+
 #include "udiskszfstypes.h"
 #include "udiskslinuxmodulezfs.h"
 #include "udiskslinuxmanagerzfs.h"
 #include "udiskslinuxpoolobjectzfs.h"
+#include "udiskslinuxblockzfs.h"
+#include "udiskslinuxfilesystemzfs.h"
 
 /**
  * SECTION:udiskslinuxmodulezfs
@@ -436,6 +440,96 @@ udisks_linux_module_zfs_handle_uevent (UDisksModule      *module,
 
 /* ---------------------------------------------------------------------------------------------------- */
 
+static gboolean
+is_zvol_device (UDisksLinuxDevice *device)
+{
+  const gchar *dev_file;
+  const gchar *dm_uuid;
+  const gchar * const *symlinks;
+
+  dev_file = g_udev_device_get_device_file (device->udev_device);
+
+  /* zvol block devices use /dev/zd* device nodes */
+  if (dev_file != NULL && g_str_has_prefix (dev_file, "/dev/zd"))
+    return TRUE;
+
+  /* Check for ZFS DM UUID (zvols created via device-mapper) */
+  dm_uuid = g_udev_device_get_property (device->udev_device, "DM_UUID");
+  if (dm_uuid != NULL && g_str_has_prefix (dm_uuid, "zvol-"))
+    return TRUE;
+
+  /* Check for /dev/zvol/ symlinks */
+  symlinks = g_udev_device_get_device_file_symlinks (device->udev_device);
+  if (symlinks != NULL)
+    {
+      for (const gchar * const *s = symlinks; *s != NULL; s++)
+        {
+          if (g_str_has_prefix (*s, "/dev/zvol/"))
+            return TRUE;
+        }
+    }
+
+  return FALSE;
+}
+
+static GType *
+udisks_linux_module_zfs_get_block_object_interface_types (UDisksModule *module)
+{
+  static GType block_object_interface_types[3];
+
+  g_return_val_if_fail (UDISKS_IS_LINUX_MODULE_ZFS (module), NULL);
+
+  if (g_once_init_enter (&block_object_interface_types[0]))
+    {
+      block_object_interface_types[1] = UDISKS_TYPE_LINUX_FILESYSTEM_ZFS;
+      g_once_init_leave (&block_object_interface_types[0], UDISKS_TYPE_LINUX_BLOCK_ZFS);
+    }
+
+  return block_object_interface_types;
+}
+
+static GDBusInterfaceSkeleton *
+udisks_linux_module_zfs_new_block_object_interface (UDisksModule           *module,
+                                                    UDisksLinuxBlockObject *object,
+                                                    GType                   interface_type)
+{
+  GDBusInterfaceSkeleton *interface = NULL;
+  UDisksLinuxDevice *device;
+  const gchar *fs_type;
+
+  g_return_val_if_fail (UDISKS_IS_LINUX_MODULE_ZFS (module), NULL);
+
+  if (interface_type == UDISKS_TYPE_LINUX_BLOCK_ZFS)
+    {
+      /* Attach Block.ZFS to devices that are ZFS pool members */
+      device = udisks_linux_block_object_get_device (UDISKS_LINUX_BLOCK_OBJECT (object));
+      fs_type = g_udev_device_get_property (device->udev_device, "ID_FS_TYPE");
+      if (g_strcmp0 (fs_type, "zfs_member") == 0)
+        {
+          interface = G_DBUS_INTERFACE_SKELETON (udisks_linux_block_zfs_new (UDISKS_LINUX_MODULE_ZFS (module), object));
+        }
+      g_object_unref (device);
+    }
+  else if (interface_type == UDISKS_TYPE_LINUX_FILESYSTEM_ZFS)
+    {
+      /* Attach Filesystem.ZFS to zvol block devices */
+      device = udisks_linux_block_object_get_device (UDISKS_LINUX_BLOCK_OBJECT (object));
+      if (is_zvol_device (device))
+        {
+          interface = G_DBUS_INTERFACE_SKELETON (udisks_linux_filesystem_zfs_new (UDISKS_LINUX_MODULE_ZFS (module), object));
+        }
+      g_object_unref (device);
+    }
+  else
+    {
+      udisks_error ("ZFS: invalid block object interface type");
+    }
+
+  return interface;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
 static void
 udisks_linux_module_zfs_class_init (UDisksLinuxModuleZFSClass *klass)
 {
@@ -449,4 +543,6 @@ udisks_linux_module_zfs_class_init (UDisksLinuxModuleZFSClass *klass)
   module_class = UDISKS_MODULE_CLASS (klass);
   module_class->new_manager = udisks_linux_module_zfs_new_manager;
   module_class->handle_uevent = udisks_linux_module_zfs_handle_uevent;
+  module_class->get_block_object_interface_types = udisks_linux_module_zfs_get_block_object_interface_types;
+  module_class->new_block_object_interface = udisks_linux_module_zfs_new_block_object_interface;
 }
