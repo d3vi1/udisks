@@ -1222,10 +1222,56 @@ handle_load_key (UDisksZFSPool         *iface,
                  GVariant              *arg_options,
                  gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Encryption key management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  gboolean success = FALSE;
+  GVariant *passphrase_v = NULL;
+  const gchar *key_location = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to load a ZFS encryption key"),
+                                     invocation);
+
+  passphrase_v = g_variant_lookup_value (arg_options, "passphrase", G_VARIANT_TYPE_BYTESTRING);
+  if (passphrase_v)
+    {
+      gsize len = 0;
+      const guchar *passphrase_data = g_variant_get_fixed_array (passphrase_v, &len, sizeof (guchar));
+      /* Convert to NUL-terminated string */
+      gchar *passphrase = g_strndup ((const gchar *) passphrase_data, len);
+
+      success = bd_zfs_encryption_load_key (arg_dataset, passphrase, &error);
+
+      /* SECURITY: zero out passphrase memory before freeing */
+      memset (passphrase, 0, len);
+      g_free (passphrase);
+      g_variant_unref (passphrase_v);
+    }
+  else if (g_variant_lookup (arg_options, "key_location", "&s", &key_location))
+    {
+      success = bd_zfs_encryption_load_key (arg_dataset, key_location, &error);
+    }
+  else
+    {
+      success = bd_zfs_encryption_load_key (arg_dataset, NULL, &error);
+    }
+
+  if (!success)
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_load_key (iface, invocation);
+
+ out:
   return TRUE;
 }
 
@@ -1236,10 +1282,29 @@ handle_unload_key (UDisksZFSPool         *iface,
                    GVariant              *arg_options,
                    gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Encryption key management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to unload a ZFS encryption key"),
+                                     invocation);
+
+  if (!bd_zfs_encryption_unload_key (arg_dataset, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_unload_key (iface, invocation);
+
+ out:
   return TRUE;
 }
 
@@ -1250,10 +1315,33 @@ handle_change_key (UDisksZFSPool         *iface,
                    GVariant              *arg_options,
                    gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Encryption key management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  const gchar *new_key_location = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Changing encryption is destructive-level */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_DESTROY,
+                                     arg_options,
+                                     N_("Authentication is required to change a ZFS encryption key"),
+                                     invocation);
+
+  g_variant_lookup (arg_options, "new_key_location", "&s", &new_key_location);
+
+  if (!bd_zfs_encryption_change_key (arg_dataset, new_key_location, NULL, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_change_key (iface, invocation);
+
+ out:
   return TRUE;
 }
 
