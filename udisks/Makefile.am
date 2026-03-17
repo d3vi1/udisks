@@ -44,6 +44,10 @@ if HAVE_LSM
 dbus_interface_files += $(top_srcdir)/modules/lsm/data/org.freedesktop.UDisks2.lsm.xml
 endif
 
+if HAVE_ZFS
+dbus_interface_files += $(top_srcdir)/modules/zfs/data/org.freedesktop.UDisks2.zfs.xml
+endif
+
 $(dbus_built_sources) : Makefile.am $(dbus_interface_files)
 	mkdir -p $(top_builddir)/doc/xml &&						\
 	gdbus-codegen									\
