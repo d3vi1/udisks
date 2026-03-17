@@ -986,10 +986,34 @@ handle_create_snapshot (UDisksZFSPool         *iface,
                         GVariant              *arg_options,
                         gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Snapshot management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  gchar *full_name = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to create a ZFS snapshot"),
+                                     invocation);
+
+  full_name = g_strdup_printf ("%s@%s", arg_dataset, arg_snap_name);
+
+  if (!bd_zfs_snapshot_create (full_name, arg_recursive, NULL, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_create_snapshot (iface, invocation);
+
+ out:
+  g_free (full_name);
   return TRUE;
 }
 
@@ -1000,10 +1024,30 @@ handle_rollback_snapshot (UDisksZFSPool         *iface,
                           GVariant              *arg_options,
                           gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Snapshot management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Rollback can destroy newer snapshots, so use the stronger destroy policy */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_DESTROY,
+                                     arg_options,
+                                     N_("Authentication is required to rollback a ZFS snapshot"),
+                                     invocation);
+
+  if (!bd_zfs_snapshot_rollback (arg_name, FALSE, TRUE, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_rollback_snapshot (iface, invocation);
+
+ out:
   return TRUE;
 }
 
@@ -1015,10 +1059,30 @@ handle_clone_snapshot (UDisksZFSPool         *iface,
                        GVariant              *arg_options,
                        gpointer               user_data)
 {
-  g_dbus_method_invocation_return_error (invocation,
-                                         G_DBUS_ERROR,
-                                         G_DBUS_ERROR_NOT_SUPPORTED,
-                                         "Snapshot management not yet implemented");
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to clone a ZFS snapshot"),
+                                     invocation);
+
+  if (!bd_zfs_snapshot_clone (arg_snapshot, arg_clone_name, NULL, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_clone_snapshot (iface, invocation, arg_clone_name);
+
+ out:
   return TRUE;
 }
 
