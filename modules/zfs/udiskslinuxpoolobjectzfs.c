@@ -55,6 +55,9 @@ struct _UDisksLinuxPoolObjectZFS
 
   /* interface */
   UDisksZFSPool *iface_zfs_pool;
+
+  /* scrub polling */
+  guint scrub_poll_id;
 };
 
 struct _UDisksLinuxPoolObjectZFSClass
@@ -75,6 +78,12 @@ static void
 udisks_linux_pool_object_zfs_finalize (GObject *_object)
 {
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (_object);
+
+  if (object->scrub_poll_id != 0)
+    {
+      g_source_remove (object->scrub_poll_id);
+      object->scrub_poll_id = 0;
+    }
 
   g_object_unref (object->module);
 
@@ -1523,6 +1532,118 @@ udisks_linux_pool_object_zfs_get_name (UDisksLinuxPoolObjectZFS *object)
   return object->name;
 }
 
+/* ---------------------------------------------------------------------------------------------------- */
+/*  Scrub status polling                                                                                */
+/* ---------------------------------------------------------------------------------------------------- */
+
+/**
+ * scrub_poll_callback:
+ *
+ * GSource callback fired every 5 seconds while a scrub is active.
+ * Queries scrub status, updates D-Bus properties, and removes itself
+ * when the scrub is no longer active.
+ */
+static gboolean
+scrub_poll_callback (gpointer user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksZFSPool *iface = object->iface_zfs_pool;
+  BDZFSScrubInfo *scrub_info;
+
+  scrub_info = bd_zfs_pool_scrub_status (object->name, NULL);
+  if (scrub_info)
+    {
+      gboolean running = (scrub_info->state == BD_ZFS_SCRUB_STATE_SCANNING);
+      gboolean paused  = (scrub_info->state == BD_ZFS_SCRUB_STATE_PAUSED);
+      gdouble  progress = scrub_info->percent_done / 100.0;
+      guint64  errors   = scrub_info->errors;
+
+      udisks_zfspool_set_scrub_running  (iface, running);
+      udisks_zfspool_set_scrub_paused   (iface, paused);
+      udisks_zfspool_set_scrub_progress (iface, progress);
+      udisks_zfspool_set_scrub_errors   (iface, errors);
+
+      bd_zfs_scrub_info_free (scrub_info);
+
+      if (running || paused)
+        return G_SOURCE_CONTINUE;
+    }
+  else
+    {
+      /* No scrub info — scrub has finished or never ran */
+      udisks_zfspool_set_scrub_running  (iface, FALSE);
+      udisks_zfspool_set_scrub_paused   (iface, FALSE);
+      udisks_zfspool_set_scrub_progress (iface, 0.0);
+      udisks_zfspool_set_scrub_errors   (iface, 0);
+    }
+
+  /* Scrub is no longer active; remove the timer */
+  object->scrub_poll_id = 0;
+  return G_SOURCE_REMOVE;
+}
+
+/**
+ * update_scrub_properties:
+ * @object: A #UDisksLinuxPoolObjectZFS.
+ *
+ * Queries the current scrub status for the pool and updates the
+ * ScrubRunning, ScrubPaused, ScrubProgress and ScrubErrors D-Bus
+ * properties accordingly.  Manages the poll timer: starts a 5-second
+ * periodic timer when a scrub is active, and removes it once the
+ * scrub finishes.
+ */
+static void
+update_scrub_properties (UDisksLinuxPoolObjectZFS *object)
+{
+  UDisksZFSPool *iface = object->iface_zfs_pool;
+  BDZFSScrubInfo *scrub_info;
+
+  scrub_info = bd_zfs_pool_scrub_status (object->name, NULL);
+  if (scrub_info)
+    {
+      gboolean running = (scrub_info->state == BD_ZFS_SCRUB_STATE_SCANNING);
+      gboolean paused  = (scrub_info->state == BD_ZFS_SCRUB_STATE_PAUSED);
+      gdouble  progress = scrub_info->percent_done / 100.0;
+      guint64  errors   = scrub_info->errors;
+
+      udisks_zfspool_set_scrub_running  (iface, running);
+      udisks_zfspool_set_scrub_paused   (iface, paused);
+      udisks_zfspool_set_scrub_progress (iface, progress);
+      udisks_zfspool_set_scrub_errors   (iface, errors);
+
+      /* Start the poll timer if a scrub is in progress and we don't
+       * already have one running. */
+      if ((running || paused) && object->scrub_poll_id == 0)
+        {
+          object->scrub_poll_id = g_timeout_add_seconds (5, scrub_poll_callback, object);
+        }
+      /* Stop the poll timer if the scrub has finished. */
+      else if (!running && !paused && object->scrub_poll_id != 0)
+        {
+          g_source_remove (object->scrub_poll_id);
+          object->scrub_poll_id = 0;
+        }
+
+      bd_zfs_scrub_info_free (scrub_info);
+    }
+  else
+    {
+      /* No scrub info available — clear properties */
+      udisks_zfspool_set_scrub_running  (iface, FALSE);
+      udisks_zfspool_set_scrub_paused   (iface, FALSE);
+      udisks_zfspool_set_scrub_progress (iface, 0.0);
+      udisks_zfspool_set_scrub_errors   (iface, 0);
+
+      if (object->scrub_poll_id != 0)
+        {
+          g_source_remove (object->scrub_poll_id);
+          object->scrub_poll_id = 0;
+        }
+    }
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
 /**
  * udisks_linux_pool_object_zfs_update:
  * @object: A #UDisksLinuxPoolObjectZFS.
@@ -1553,9 +1674,10 @@ udisks_linux_pool_object_zfs_update (UDisksLinuxPoolObjectZFS *object,
   udisks_zfspool_set_altroot (iface, info->altroot ? info->altroot : "");
   udisks_zfspool_set_health (iface, pool_state_to_string (info->state));
 
-  /* Scrub info and feature flags require separate queries;
-   * set safe defaults here. They will be populated by a full
-   * status update later. */
+  /* Query and update scrub status (also starts/stops the poll timer) */
+  update_scrub_properties (object);
+
+  /* Feature flags require a separate query; set safe defaults here. */
   {
     const gchar *const empty_strv[] = { NULL };
     udisks_zfspool_set_feature_flags (iface, empty_strv);
@@ -1574,6 +1696,13 @@ void
 udisks_linux_pool_object_zfs_destroy (UDisksLinuxPoolObjectZFS *object)
 {
   g_return_if_fail (UDISKS_IS_LINUX_POOL_OBJECT_ZFS (object));
+
+  /* Stop the scrub poll timer to prevent use-after-free */
+  if (object->scrub_poll_id != 0)
+    {
+      g_source_remove (object->scrub_poll_id);
+      object->scrub_poll_id = 0;
+    }
 
   if (object->iface_zfs_pool != NULL)
     {
