@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+
+<policyconfig>
+  <vendor>The Udisks Project</vendor>
+  <vendor_url>https://github.com/storaged-project/udisks</vendor_url>
+  <icon_name>drive-removable-media</icon_name>
+
+  <!-- ###################################################################### -->
+  <!-- Query ZFS status -->
+
+  <action id="org.freedesktop.udisks2.zfs.query">
+    <description>Query ZFS status</description>
+    <message>Authentication is required to query ZFS status</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
+  <!-- ###################################################################### -->
+  <!-- Manage ZFS -->
+
+  <action id="org.freedesktop.udisks2.zfs.manage-zfs">
+    <description>Manage ZFS</description>
+    <message>Authentication is required to manage ZFS</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <!-- ###################################################################### -->
+  <!-- Destroy ZFS resources -->
+
+  <action id="org.freedesktop.udisks2.zfs.manage-zfs-destroy">
+    <description>Destroy ZFS resources</description>
+    <message>Authentication is required to destroy ZFS resources</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+
+</policyconfig>
