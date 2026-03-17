@@ -29,6 +29,7 @@
 #include <src/udisksdaemonutil.h>
 
 #include "udiskszfstypes.h"
+#include "udiskszfsdaemonutil.h"
 #include "udiskslinuxpoolobjectzfs.h"
 #include "udiskslinuxmodulezfs.h"
 
@@ -574,15 +575,10 @@ handle_set_property (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  GError *prop_error = NULL;
+  const gchar *action_id;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
-
-  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
-                                     UDISKS_OBJECT (object),
-                                     ZFS_POLICY_ACTION_ID,
-                                     arg_options,
-                                     N_("Authentication is required to set a ZFS pool property"),
-                                     invocation);
 
   if (arg_name == NULL || strlen (arg_name) == 0)
     {
@@ -592,6 +588,26 @@ handle_set_property (UDisksZFSPool         *iface,
                                              "Property name must not be empty");
       goto out;
     }
+
+  /* Check property against the allowlist */
+  if (!udisks_zfs_property_is_allowed (arg_name, &prop_error))
+    {
+      g_dbus_method_invocation_take_error (invocation, prop_error);
+      goto out;
+    }
+
+  /* Security-sensitive properties require elevated authorization */
+  if (udisks_zfs_property_is_safe (arg_name, NULL))
+    action_id = ZFS_POLICY_ACTION_ID;
+  else
+    action_id = ZFS_POLICY_ACTION_ID_DESTROY;
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     action_id,
+                                     arg_options,
+                                     N_("Authentication is required to set a ZFS pool property"),
+                                     invocation);
 
   if (!bd_zfs_pool_set_property (object->name, arg_name, arg_value, &error))
     {
@@ -938,6 +954,11 @@ handle_mount_dataset (UDisksZFSPool         *iface,
                                      N_("Authentication is required to mount a ZFS dataset"),
                                      invocation);
 
+  /* TODO: When the UDisks mount options framework (udiskslinuxmountoptions.c)
+   * is integrated with the ZFS module, enforce nodev,nosuid defaults here.
+   * This requires mapping ZFS mount semantics to the core options framework
+   * and is deferred to a future change. */
+
   if (!bd_zfs_dataset_mount (arg_name, NULL, NULL, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
@@ -1142,16 +1163,10 @@ handle_set_dataset_property (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  GError *prop_error = NULL;
+  const gchar *action_id;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
-
-  /* Policy check — security-sensitive property allowlist deferred to U9 */
-  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
-                                     UDISKS_OBJECT (object),
-                                     ZFS_POLICY_ACTION_ID,
-                                     arg_options,
-                                     N_("Authentication is required to set a ZFS dataset property"),
-                                     invocation);
 
   if (arg_property == NULL || strlen (arg_property) == 0)
     {
@@ -1161,6 +1176,26 @@ handle_set_dataset_property (UDisksZFSPool         *iface,
                                              "Property name must not be empty");
       goto out;
     }
+
+  /* Check property against the allowlist */
+  if (!udisks_zfs_property_is_allowed (arg_property, &prop_error))
+    {
+      g_dbus_method_invocation_take_error (invocation, prop_error);
+      goto out;
+    }
+
+  /* Security-sensitive properties require elevated authorization */
+  if (udisks_zfs_property_is_safe (arg_property, NULL))
+    action_id = ZFS_POLICY_ACTION_ID;
+  else
+    action_id = ZFS_POLICY_ACTION_ID_DESTROY;
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     action_id,
+                                     arg_options,
+                                     N_("Authentication is required to set a ZFS dataset property"),
+                                     invocation);
 
   if (!bd_zfs_dataset_set_property (arg_dataset, arg_property, arg_value, &error))
     {
