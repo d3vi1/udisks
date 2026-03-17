@@ -45,6 +45,10 @@ libudisks2_zfs_la_SOURCES =                                                    \
 	udiskslinuxmanagerzfs.c                                                \
 	udiskslinuxpoolobjectzfs.h                                             \
 	udiskslinuxpoolobjectzfs.c                                             \
+	udiskslinuxblockzfs.h                                                  \
+	udiskslinuxblockzfs.c                                                  \
+	udiskslinuxfilesystemzfs.h                                             \
+	udiskslinuxfilesystemzfs.c                                             \
 	udiskszfstypes.h                                                       \
 	$(NULL)
 

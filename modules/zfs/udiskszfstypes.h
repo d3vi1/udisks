@@ -34,4 +34,10 @@ typedef struct _UDisksLinuxManagerZFSClass   UDisksLinuxManagerZFSClass;
 typedef struct _UDisksLinuxPoolObjectZFS        UDisksLinuxPoolObjectZFS;
 typedef struct _UDisksLinuxPoolObjectZFSClass   UDisksLinuxPoolObjectZFSClass;
 
+typedef struct _UDisksLinuxBlockZFS        UDisksLinuxBlockZFS;
+typedef struct _UDisksLinuxBlockZFSClass   UDisksLinuxBlockZFSClass;
+
+typedef struct _UDisksLinuxFilesystemZFS        UDisksLinuxFilesystemZFS;
+typedef struct _UDisksLinuxFilesystemZFSClass   UDisksLinuxFilesystemZFSClass;
+
 #endif /* __UDISKS_ZFS_TYPES_H__ */
