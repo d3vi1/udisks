@@ -1130,7 +1130,10 @@ handle_destroy_dataset (UDisksZFSPool         *iface,
                                      N_("Authentication is required to destroy a ZFS dataset"),
                                      invocation);
 
-  if (!bd_zfs_dataset_destroy (arg_name, arg_recursive, FALSE, &error))
+  /* Try to unmount first (ignore errors — it may already be unmounted) */
+  bd_zfs_dataset_unmount (arg_name, TRUE, NULL);
+
+  if (!bd_zfs_dataset_destroy (arg_name, arg_recursive, TRUE, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;

@@ -64,6 +64,14 @@ static const gchar * const safe_properties[] =
   "redundant_metadata",
   "dnodesize",
   "special_small_blocks",
+  /* Pool-level properties */
+  "autoexpand",
+  "autoreplace",
+  "comment",
+  "delegation",
+  "failmode",
+  "listsnapshots",
+  "multihost",
   NULL
 };
 
