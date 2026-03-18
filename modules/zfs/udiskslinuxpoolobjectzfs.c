@@ -777,7 +777,7 @@ handle_list_datasets (UDisksZFSPool         *iface,
   UDisksDaemon *daemon;
   GError *error = NULL;
   BDZFSDatasetInfo **infos = NULL;
-  gboolean recursive = FALSE;
+  gboolean recursive = TRUE;  /* default to recursive — a pool dataset list is useless without it */
   const gchar *type_filter = NULL;
   gint64 offset = 0;
   gint64 limit = -1;
@@ -1512,18 +1512,27 @@ vdev_type_to_string (BDZFSVdevType type)
       return "file";
     case BD_ZFS_VDEV_TYPE_MIRROR:
       return "mirror";
-    case BD_ZFS_VDEV_TYPE_RAIDZ:
-      return "raidz";
-    case BD_ZFS_VDEV_TYPE_REPLACING:
-      return "replacing";
+    case BD_ZFS_VDEV_TYPE_RAIDZ1:
+      return "raidz1";
+    case BD_ZFS_VDEV_TYPE_RAIDZ2:
+      return "raidz2";
+    case BD_ZFS_VDEV_TYPE_RAIDZ3:
+      return "raidz3";
+    case BD_ZFS_VDEV_TYPE_DRAID:
+      return "draid";
     case BD_ZFS_VDEV_TYPE_SPARE:
       return "spare";
     case BD_ZFS_VDEV_TYPE_LOG:
       return "log";
-    case BD_ZFS_VDEV_TYPE_L2CACHE:
-      return "l2cache";
+    case BD_ZFS_VDEV_TYPE_CACHE:
+      return "cache";
+    case BD_ZFS_VDEV_TYPE_SPECIAL:
+      return "special";
+    case BD_ZFS_VDEV_TYPE_DEDUP:
+      return "dedup";
     case BD_ZFS_VDEV_TYPE_ROOT:
       return "root";
+    case BD_ZFS_VDEV_TYPE_UNKNOWN:
     default:
       return "unknown";
     }
