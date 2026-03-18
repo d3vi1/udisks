@@ -18,4 +18,8 @@ if HAVE_LSM
 SUBDIRS += lsm
 endif # HAVE_LSM
 
+if HAVE_ZFS
+SUBDIRS += zfs
+endif # HAVE_ZFS
+
 NULL =

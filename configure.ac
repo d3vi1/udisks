@@ -387,6 +387,32 @@ if test "x$enable_btrfs" = "xyes" \
 fi
 AM_CONDITIONAL(HAVE_BTRFS, [test "x$have_btrfs" = "xyes"])
 
+# ZFS module
+have_zfs=no
+AC_ARG_ENABLE(zfs, AS_HELP_STRING([--enable-zfs], [enable ZFS support]))
+if test "x$enable_zfs" = "xyes" \
+     -o "x$enable_modules" = "xyes" \
+     -o "x$enable_available_modules" = "xyes"; then
+    SAVE_CFLAGS=$CFLAGS
+    SAVE_LDFLAGS=$LDFLAGS
+    CFLAGS="$GLIB_CFLAGS"
+    LDFLAGS="$GLIB_LIBS"
+    AC_MSG_CHECKING(["libblockdev-zfs presence"])
+    AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <blockdev/zfs.h>]], [[]])],[AC_MSG_RESULT([yes])
+                    AC_DEFINE(HAVE_ZFS, 1, [Define, if libblockdev-zfs is available])
+                    have_zfs=yes],[AC_MSG_RESULT([no])
+                    have_zfs=no])
+    CFLAGS=$SAVE_CFLAGS
+    LDFLAGS=$SAVE_LDFLAGS
+
+    if test "x$have_zfs" = "xno"; then
+     if test "x$enable_zfs" = "xyes" -o "x$enable_modules" = "xyes"; then
+         AC_MSG_ERROR([ZFS support requested but header or library not found])
+     fi
+    fi
+fi
+AM_CONDITIONAL(HAVE_ZFS, [test "x$have_zfs" = "xyes"])
+
 # LSM module
 have_lsm=no
 have_libconfig=no
@@ -627,6 +653,9 @@ modules/lvm2/data/udisks2-lvm2.pc
 modules/lsm/Makefile
 modules/lsm/data/Makefile
 modules/lsm/data/udisks2-lsm.pc
+modules/zfs/Makefile
+modules/zfs/data/Makefile
+modules/zfs/data/udisks2-zfs.pc
 doc/Makefile
 doc/udisks2-docs.xml.in
 doc/udisks2-sections.txt.in
@@ -703,5 +732,6 @@ echo "
         BTRFS module:               ${have_btrfs}
         iSCSI module:               ${have_iscsi}${have_libiscsi_session_info_msg}
         LVM2  module:               ${have_lvm2}
+        ZFS module:                 ${have_zfs}
         LibStorageMgmt module:      ${have_lsm}
 "

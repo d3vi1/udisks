@@ -1,0 +1,476 @@
+<!DOCTYPE node PUBLIC
+"-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node name="/" xmlns:doc="http://www.freedesktop.org/dbus/1.0/doc.dtd">
+
+<!--
+ Copyright (C) 2024 Razvan Cojocaru <rzvncj@gmail.com>
+
+ This library is free software; you can redistribute it and/or
+ modify it under the terms of the GNU Lesser General Public
+ License as published by the Free Software Foundation; either
+ version 2 of the License, or (at your option) any later version.
+
+ This library is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ Lesser General Public License for more details.
+
+ You should have received a copy of the GNU Lesser General
+ Public License along with this library; if not, write to the
+ Free Software Foundation, Inc., 59 Temple Place, Suite 330,
+ Boston, MA 02111-1307, USA.
+-->
+
+  <!-- ********************************************************************** -->
+
+  <!--
+      org.freedesktop.UDisks2.Manager.ZFS:
+      @short_description: ZFS add-on to the manager singleton
+
+      Additional interface with ZFS specifics for top-level manager
+      singleton object located at the object path
+      <literal>/org/freedesktop/UDisks2/Manager</literal>.
+  -->
+  <interface name="org.freedesktop.UDisks2.Manager.ZFS">
+    <!-- prereq: org.freedesktop.UDisks2.Manager -->
+
+    <!--
+        PoolCreate:
+        @name: The name for the new pool.
+        @blocks: An array of object paths to objects implementing the #org.freedesktop.UDisks2.Block interface.
+        @vdev_type: The vdev type (e.g. "mirror", "raidz", "raidz2", "raidz3", or empty for stripe).
+        @options: Additional options.
+        @result: Object path of the new pool object.
+
+        Creates a new ZFS pool from @blocks.
+    -->
+    <method name="PoolCreate">
+      <arg name="name" direction="in" type="s"/>
+      <arg name="blocks" direction="in" type="ao"/>
+      <arg name="vdev_type" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+      <arg name="result" direction="out" type="o"/>
+    </method>
+
+    <!--
+        PoolImport:
+        @name_or_guid: The pool name or GUID to import.
+        @options: Additional options.
+        @result: Object path of the imported pool object.
+
+        Imports a ZFS pool by name or GUID.
+    -->
+    <method name="PoolImport">
+      <arg name="name_or_guid" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+      <arg name="result" direction="out" type="o"/>
+    </method>
+
+    <!--
+        PoolImportAll:
+        @options: Additional options.
+
+        Imports all available ZFS pools.
+    -->
+    <method name="PoolImportAll">
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+  </interface>
+
+  <!-- ********************************************************************** -->
+
+  <!--
+      org.freedesktop.UDisks2.ZFSPool:
+      @short_description: ZFS pool interface
+
+      This interface is used for objects representing ZFS pools.
+  -->
+  <interface name="org.freedesktop.UDisks2.ZFSPool">
+
+    <property name="Name" type="s" access="read"/>
+    <property name="GUID" type="s" access="read"/>
+    <property name="State" type="s" access="read"/>
+    <property name="Size" type="t" access="read"/>
+    <property name="Allocated" type="t" access="read"/>
+    <property name="Free" type="t" access="read"/>
+    <property name="Fragmentation" type="t" access="read"/>
+    <property name="DedupRatio" type="d" access="read"/>
+    <property name="ReadOnly" type="b" access="read"/>
+    <property name="Altroot" type="s" access="read"/>
+    <property name="Health" type="s" access="read"/>
+    <property name="FeatureFlags" type="as" access="read"/>
+    <property name="ScrubRunning" type="b" access="read"/>
+    <property name="ScrubPaused" type="b" access="read"/>
+    <property name="ScrubProgress" type="d" access="read"/>
+    <property name="ScrubErrors" type="t" access="read"/>
+
+    <!--
+        Poll:
+
+        Re-reads pool status from the kernel.
+    -->
+    <method name="Poll"/>
+
+    <!--
+        Export:
+        @force: If %TRUE, force export even if the pool is in use.
+        @options: Additional options.
+
+        Exports the ZFS pool.
+    -->
+    <method name="Export">
+      <arg name="force" direction="in" type="b"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        Destroy:
+        @force: If %TRUE, force destroy even if the pool is in use.
+        @options: Additional options.
+
+        Destroys the ZFS pool.
+    -->
+    <method name="Destroy">
+      <arg name="force" direction="in" type="b"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        AddVdev:
+        @vdev_type: The vdev type (e.g. "mirror", "raidz", "cache", "log", "spare").
+        @blocks: An array of object paths to objects implementing the #org.freedesktop.UDisks2.Block interface.
+        @options: Additional options.
+
+        Adds a vdev to the pool.
+    -->
+    <method name="AddVdev">
+      <arg name="vdev_type" direction="in" type="s"/>
+      <arg name="blocks" direction="in" type="ao"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        RemoveVdev:
+        @device: The device name to remove from the pool.
+        @options: Additional options.
+
+        Removes a vdev from the pool.
+    -->
+    <method name="RemoveVdev">
+      <arg name="device" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        ScrubStart:
+        @options: Additional options.
+
+        Starts a scrub on the pool.
+    -->
+    <method name="ScrubStart">
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        ScrubPause:
+        @options: Additional options.
+
+        Pauses a running scrub on the pool.
+    -->
+    <method name="ScrubPause">
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        ScrubStop:
+        @options: Additional options.
+
+        Stops a running scrub on the pool.
+    -->
+    <method name="ScrubStop">
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        TrimStart:
+        @options: Additional options.
+
+        Starts a TRIM on the pool.
+    -->
+    <method name="TrimStart">
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        SetProperty:
+        @name: The property name.
+        @value: The property value.
+        @options: Additional options.
+
+        Sets a pool property.
+    -->
+    <method name="SetProperty">
+      <arg name="name" direction="in" type="s"/>
+      <arg name="value" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        GetProperty:
+        @name: The property name.
+        @options: Additional options.
+        @value: The property value.
+        @source: The property source.
+
+        Gets a pool property.
+    -->
+    <method name="GetProperty">
+      <arg name="name" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+      <arg name="value" direction="out" type="s"/>
+      <arg name="source" direction="out" type="s"/>
+    </method>
+
+    <!--
+        CreateDataset:
+        @name: The dataset name (relative to the pool).
+        @options: Additional options.
+        @result: The full dataset name.
+
+        Creates a new ZFS dataset (filesystem).
+    -->
+    <method name="CreateDataset">
+      <arg name="name" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+      <arg name="result" direction="out" type="s"/>
+    </method>
+
+    <!--
+        CreateVolume:
+        @name: The volume name (relative to the pool).
+        @size: The volume size in bytes.
+        @options: Additional options.
+        @result: The full volume name.
+
+        Creates a new ZFS volume (zvol).
+    -->
+    <method name="CreateVolume">
+      <arg name="name" direction="in" type="s"/>
+      <arg name="size" direction="in" type="t"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+      <arg name="result" direction="out" type="s"/>
+    </method>
+
+    <!--
+        ListDatasets:
+        @options: Additional options.
+        @datasets: An array of dictionaries with dataset properties.
+
+        Lists all datasets in the pool.
+    -->
+    <method name="ListDatasets">
+      <arg name="options" direction="in" type="a{sv}"/>
+      <arg name="datasets" direction="out" type="aa{sv}"/>
+    </method>
+
+    <!--
+        DestroyDataset:
+        @name: The dataset name to destroy.
+        @recursive: If %TRUE, destroy all children recursively.
+        @options: Additional options.
+
+        Destroys a ZFS dataset.
+    -->
+    <method name="DestroyDataset">
+      <arg name="name" direction="in" type="s"/>
+      <arg name="recursive" direction="in" type="b"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        MountDataset:
+        @name: The dataset name to mount.
+        @options: Additional options.
+
+        Mounts a ZFS dataset.
+    -->
+    <method name="MountDataset">
+      <arg name="name" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        UnmountDataset:
+        @name: The dataset name to unmount.
+        @force: If %TRUE, force unmount.
+        @options: Additional options.
+
+        Unmounts a ZFS dataset.
+    -->
+    <method name="UnmountDataset">
+      <arg name="name" direction="in" type="s"/>
+      <arg name="force" direction="in" type="b"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        CreateSnapshot:
+        @dataset: The dataset name to snapshot.
+        @snap_name: The snapshot name.
+        @recursive: If %TRUE, create snapshots recursively.
+        @options: Additional options.
+
+        Creates a ZFS snapshot.
+    -->
+    <method name="CreateSnapshot">
+      <arg name="dataset" direction="in" type="s"/>
+      <arg name="snap_name" direction="in" type="s"/>
+      <arg name="recursive" direction="in" type="b"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        RollbackSnapshot:
+        @name: The snapshot name to rollback to.
+        @options: Additional options.
+
+        Rolls back to a ZFS snapshot.
+    -->
+    <method name="RollbackSnapshot">
+      <arg name="name" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        CloneSnapshot:
+        @snapshot: The snapshot name to clone.
+        @clone_name: The name for the clone.
+        @options: Additional options.
+        @result: The full clone name.
+
+        Clones a ZFS snapshot.
+    -->
+    <method name="CloneSnapshot">
+      <arg name="snapshot" direction="in" type="s"/>
+      <arg name="clone_name" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+      <arg name="result" direction="out" type="s"/>
+    </method>
+
+    <!--
+        RenameDataset:
+        @name: The dataset name to rename.
+        @new_name: The new name for the dataset.
+        @options: Additional options.
+
+        Renames a ZFS dataset.
+    -->
+    <method name="RenameDataset">
+      <arg name="name" direction="in" type="s"/>
+      <arg name="new_name" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        SetDatasetProperty:
+        @dataset: The dataset name.
+        @property: The property name.
+        @value: The property value.
+        @options: Additional options.
+
+        Sets a property on a ZFS dataset.
+    -->
+    <method name="SetDatasetProperty">
+      <arg name="dataset" direction="in" type="s"/>
+      <arg name="property" direction="in" type="s"/>
+      <arg name="value" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        GetDatasetProperty:
+        @dataset: The dataset name.
+        @property: The property name.
+        @options: Additional options.
+        @value: The property value.
+        @source: The property source.
+
+        Gets a property from a ZFS dataset.
+    -->
+    <method name="GetDatasetProperty">
+      <arg name="dataset" direction="in" type="s"/>
+      <arg name="property" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+      <arg name="value" direction="out" type="s"/>
+      <arg name="source" direction="out" type="s"/>
+    </method>
+
+    <!--
+        LoadKey:
+        @dataset: The encrypted dataset name.
+        @options: Additional options.
+
+        Loads the encryption key for a dataset.
+    -->
+    <method name="LoadKey">
+      <arg name="dataset" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        UnloadKey:
+        @dataset: The encrypted dataset name.
+        @options: Additional options.
+
+        Unloads the encryption key for a dataset.
+    -->
+    <method name="UnloadKey">
+      <arg name="dataset" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        ChangeKey:
+        @dataset: The encrypted dataset name.
+        @options: Additional options.
+
+        Changes the encryption key for a dataset.
+    -->
+    <method name="ChangeKey">
+      <arg name="dataset" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+  </interface>
+
+  <!-- ********************************************************************** -->
+
+  <!--
+      org.freedesktop.UDisks2.Block.ZFS:
+      @short_description: ZFS block device interface
+
+      This interface is used for #org.freedesktop.UDisks2.Block devices that
+      are part of a ZFS pool.
+  -->
+  <interface name="org.freedesktop.UDisks2.Block.ZFS">
+    <property name="Pool" type="o" access="read"/>
+  </interface>
+
+  <!-- ********************************************************************** -->
+
+  <!--
+      org.freedesktop.UDisks2.Filesystem.ZFS:
+      @short_description: ZFS filesystem interface
+
+      This interface is used for #org.freedesktop.UDisks2.Block devices that
+      contain a ZFS filesystem.
+  -->
+  <interface name="org.freedesktop.UDisks2.Filesystem.ZFS">
+    <property name="Pool" type="o" access="read"/>
+    <property name="PoolName" type="s" access="read"/>
+    <property name="DatasetName" type="s" access="read"/>
+  </interface>
+
+</node>
