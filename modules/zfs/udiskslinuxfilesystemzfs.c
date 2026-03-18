@@ -281,12 +281,38 @@ udisks_linux_filesystem_zfs_update (UDisksLinuxFilesystemZFS *fs_zfs,
     }
   else
     {
-      /* Try /dev/zvol symlink path: the device path encodes pool/dataset */
+      /* Try /dev/zvol symlink path: the device path encodes pool/dataset.
+       * The primary dev_file for zvols is /dev/zd*, but udev creates a
+       * symlink at /dev/zvol/pool/dataset. Check DEVLINKS for this. */
       const gchar *zvol_prefix = "/dev/zvol/";
+      const gchar *zvol_link = NULL;
+      const gchar *const *symlinks;
 
+      /* Check if dev_file itself is a /dev/zvol/ path */
       if (dev_file != NULL && g_str_has_prefix (dev_file, zvol_prefix))
         {
-          const gchar *zvol_path = dev_file + strlen (zvol_prefix);
+          zvol_link = dev_file;
+        }
+      else
+        {
+          /* Check DEVLINKS (udev symlinks) for /dev/zvol/ entries */
+          symlinks = g_udev_device_get_device_file_symlinks (device->udev_device);
+          if (symlinks != NULL)
+            {
+              for (const gchar *const *s = symlinks; *s != NULL; s++)
+                {
+                  if (g_str_has_prefix (*s, zvol_prefix))
+                    {
+                      zvol_link = *s;
+                      break;
+                    }
+                }
+            }
+        }
+
+      if (zvol_link != NULL)
+        {
+          const gchar *zvol_path = zvol_link + strlen (zvol_prefix);
           const gchar *slash;
 
           slash = strchr (zvol_path, '/');
