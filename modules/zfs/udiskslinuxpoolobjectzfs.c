@@ -1335,6 +1335,7 @@ handle_clone_snapshot (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  gchar *full_clone_name = NULL;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
@@ -1342,6 +1343,20 @@ handle_clone_snapshot (UDisksZFSPool         *iface,
   if (!udisks_zfs_validate_name_in_pool (object->name, arg_snapshot, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
+  /* If the clone name doesn't contain a '/', prepend the pool name */
+  if (strchr (arg_clone_name, '/') == NULL)
+    full_clone_name = g_strdup_printf ("%s/%s", object->name, arg_clone_name);
+  else
+    full_clone_name = g_strdup (arg_clone_name);
+
+  /* Validate the full clone name against the pool */
+  if (!udisks_zfs_validate_name_in_pool (object->name, full_clone_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      g_free (full_clone_name);
       return TRUE;
     }
 
@@ -1353,16 +1368,17 @@ handle_clone_snapshot (UDisksZFSPool         *iface,
                                      N_("Authentication is required to clone a ZFS snapshot"),
                                      invocation);
 
-  if (!bd_zfs_snapshot_clone (arg_snapshot, arg_clone_name, NULL, &error))
+  if (!bd_zfs_snapshot_clone (arg_snapshot, full_clone_name, NULL, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
     }
 
   udisks_linux_module_zfs_trigger_update (object->module);
-  udisks_zfspool_complete_clone_snapshot (iface, invocation, arg_clone_name);
+  udisks_zfspool_complete_clone_snapshot (iface, invocation, full_clone_name);
 
  out:
+  g_free (full_clone_name);
   return TRUE;
 }
 
@@ -2020,7 +2036,7 @@ handle_promote_clone (UDisksZFSPool         *iface,
                                      N_("Authentication is required to promote a ZFS clone"),
                                      invocation);
 
-  if (!bd_zfs_dataset_promote (arg_clone_name, &error))
+  if (!bd_zfs_snapshot_promote (arg_clone_name, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
@@ -2072,7 +2088,7 @@ handle_hold_snapshot (UDisksZFSPool         *iface,
                                      N_("Authentication is required to hold a ZFS snapshot"),
                                      invocation);
 
-  if (!bd_zfs_snapshot_hold (arg_snapshot, arg_tag, FALSE, &error))
+  if (!bd_zfs_snapshot_hold (arg_snapshot, arg_tag, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
@@ -2123,7 +2139,7 @@ handle_release_snapshot (UDisksZFSPool         *iface,
                                      N_("Authentication is required to release a ZFS snapshot hold"),
                                      invocation);
 
-  if (!bd_zfs_snapshot_release (arg_snapshot, arg_tag, FALSE, &error))
+  if (!bd_zfs_snapshot_release (arg_snapshot, arg_tag, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
@@ -2174,7 +2190,7 @@ handle_inherit_property (UDisksZFSPool         *iface,
                                      N_("Authentication is required to inherit a ZFS dataset property"),
                                      invocation);
 
-  if (!bd_zfs_dataset_inherit (arg_dataset, arg_property, FALSE, &error))
+  if (!bd_zfs_dataset_inherit_property (arg_dataset, arg_property, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
