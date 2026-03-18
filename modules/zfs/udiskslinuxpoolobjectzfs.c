@@ -446,6 +446,191 @@ handle_remove_vdev (UDisksZFSPool         *iface,
 /* ---------------------------------------------------------------------------------------------------- */
 
 static gboolean
+handle_replace_vdev (UDisksZFSPool         *iface,
+                     GDBusMethodInvocation *invocation,
+                     const gchar           *arg_old_device,
+                     const gchar           *arg_new_device,
+                     gboolean               arg_force,
+                     GVariant              *arg_options,
+                     gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to replace a ZFS device"),
+                                     invocation);
+
+  if (!bd_zfs_pool_replace (object->name, arg_old_device, arg_new_device, arg_force, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_replace_vdev (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_attach_vdev (UDisksZFSPool         *iface,
+                    GDBusMethodInvocation *invocation,
+                    const gchar           *arg_existing_device,
+                    const gchar           *arg_new_device,
+                    GVariant              *arg_options,
+                    gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to attach a ZFS device"),
+                                     invocation);
+
+  if (!bd_zfs_pool_attach (object->name, arg_existing_device, arg_new_device, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_attach_vdev (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_detach_vdev (UDisksZFSPool         *iface,
+                    GDBusMethodInvocation *invocation,
+                    const gchar           *arg_device,
+                    GVariant              *arg_options,
+                    gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to detach a ZFS device"),
+                                     invocation);
+
+  if (!bd_zfs_pool_detach (object->name, arg_device, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_detach_vdev (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_online_vdev (UDisksZFSPool         *iface,
+                    GDBusMethodInvocation *invocation,
+                    const gchar           *arg_device,
+                    gboolean               arg_expand,
+                    GVariant              *arg_options,
+                    gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to online a ZFS device"),
+                                     invocation);
+
+  if (!bd_zfs_pool_online (object->name, arg_device, arg_expand, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_online_vdev (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_offline_vdev (UDisksZFSPool         *iface,
+                     GDBusMethodInvocation *invocation,
+                     const gchar           *arg_device,
+                     gboolean               arg_temporary,
+                     GVariant              *arg_options,
+                     gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to offline a ZFS device"),
+                                     invocation);
+
+  if (!bd_zfs_pool_offline (object->name, arg_device, arg_temporary, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_offline_vdev (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
 handle_scrub_start (UDisksZFSPool         *iface,
                     GDBusMethodInvocation *invocation,
                     GVariant              *arg_options,
@@ -1694,6 +1879,16 @@ udisks_linux_pool_object_zfs_constructed (GObject *_object)
                     G_CALLBACK (handle_add_vdev), object);
   g_signal_connect (object->iface_zfs_pool, "handle-remove-vdev",
                     G_CALLBACK (handle_remove_vdev), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-replace-vdev",
+                    G_CALLBACK (handle_replace_vdev), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-attach-vdev",
+                    G_CALLBACK (handle_attach_vdev), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-detach-vdev",
+                    G_CALLBACK (handle_detach_vdev), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-online-vdev",
+                    G_CALLBACK (handle_online_vdev), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-offline-vdev",
+                    G_CALLBACK (handle_offline_vdev), object);
   g_signal_connect (object->iface_zfs_pool, "handle-scrub-start",
                     G_CALLBACK (handle_scrub_start), object);
   g_signal_connect (object->iface_zfs_pool, "handle-scrub-pause",

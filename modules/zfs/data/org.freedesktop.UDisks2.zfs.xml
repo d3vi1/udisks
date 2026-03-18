@@ -164,6 +164,76 @@
     </method>
 
     <!--
+        ReplaceVdev:
+        @old_device: The device name of the vdev to replace.
+        @new_device: The device name of the replacement.
+        @force: If %TRUE, force the replacement.
+        @options: Additional options.
+
+        Replaces a vdev in the pool with a new device.
+    -->
+    <method name="ReplaceVdev">
+      <arg name="old_device" direction="in" type="s"/>
+      <arg name="new_device" direction="in" type="s"/>
+      <arg name="force" direction="in" type="b"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        AttachVdev:
+        @existing_device: The device name of an existing vdev.
+        @new_device: The device name to attach as a mirror leg.
+        @options: Additional options.
+
+        Attaches a new device to an existing vdev, creating or extending a mirror.
+    -->
+    <method name="AttachVdev">
+      <arg name="existing_device" direction="in" type="s"/>
+      <arg name="new_device" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        DetachVdev:
+        @device: The device name to detach from the pool.
+        @options: Additional options.
+
+        Detaches a device from a mirrored vdev.
+    -->
+    <method name="DetachVdev">
+      <arg name="device" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        OnlineVdev:
+        @device: The device name to bring online.
+        @expand: If %TRUE, expand the vdev to use all available space.
+        @options: Additional options.
+
+        Brings a vdev online.
+    -->
+    <method name="OnlineVdev">
+      <arg name="device" direction="in" type="s"/>
+      <arg name="expand" direction="in" type="b"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        OfflineVdev:
+        @device: The device name to take offline.
+        @temporary: If %TRUE, the offline state is temporary (until next reboot/import).
+        @options: Additional options.
+
+        Takes a vdev offline.
+    -->
+    <method name="OfflineVdev">
+      <arg name="device" direction="in" type="s"/>
+      <arg name="temporary" direction="in" type="b"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
         ScrubStart:
         @options: Additional options.
 
