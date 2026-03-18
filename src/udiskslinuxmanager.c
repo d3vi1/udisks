@@ -1057,7 +1057,16 @@ handle_can_format (UDisksManager         *object,
       ret = bd_fs_can_mkfs (type, NULL, &required_utility, &error);
       if (error != NULL)
         {
-          g_dbus_method_invocation_take_error (invocation, error);
+          /* Return (false, error_message) instead of a D-Bus error.
+           * Some filesystem types (e.g. ZFS) may appear in
+           * SupportedFilesystems but lack mkfs support in libblockdev.
+           * Returning a D-Bus error here breaks Cockpit storaged which
+           * calls CanFormat for every SupportedFilesystem inside a
+           * Promise.all() without individual error handlers. */
+          udisks_manager_complete_can_format (object,
+                                              invocation,
+                                              g_variant_new ("(bs)", FALSE, error->message));
+          g_error_free (error);
           return TRUE;
         }
     }
@@ -1084,7 +1093,13 @@ handle_can_resize (UDisksManager         *object,
 
   if (error != NULL)
     {
-      g_dbus_method_invocation_take_error (invocation, error);
+      /* Return (false, 0, error_message) instead of a D-Bus error.
+       * See handle_can_format for rationale. */
+      udisks_manager_complete_can_resize (object,
+                                          invocation,
+                                          g_variant_new ("(bts)", FALSE, (guint64) 0,
+                                                         error->message));
+      g_error_free (error);
       return TRUE;
     }
 
@@ -1111,7 +1126,12 @@ handle_can_check (UDisksManager         *object,
 
   if (error != NULL)
     {
-      g_dbus_method_invocation_take_error (invocation, error);
+      /* Return (false, error_message) instead of a D-Bus error.
+       * See handle_can_format for rationale. */
+      udisks_manager_complete_can_check (object,
+                                          invocation,
+                                          g_variant_new ("(bs)", FALSE, error->message));
+      g_error_free (error);
       return TRUE;
     }
 
@@ -1138,7 +1158,12 @@ handle_can_repair (UDisksManager         *object,
 
   if (error != NULL)
     {
-      g_dbus_method_invocation_take_error (invocation, error);
+      /* Return (false, error_message) instead of a D-Bus error.
+       * See handle_can_format for rationale. */
+      udisks_manager_complete_can_repair (object,
+                                          invocation,
+                                          g_variant_new ("(bs)", FALSE, error->message));
+      g_error_free (error);
       return TRUE;
     }
 
