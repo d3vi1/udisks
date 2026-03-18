@@ -77,6 +77,20 @@
       <arg name="options" direction="in" type="a{sv}"/>
     </method>
 
+    <!--
+        ListImportablePools:
+        @options: Additional options.
+        @pools: An array of dictionaries, each containing "name" (s), "guid" (s), and "state" (s).
+
+        Discovers ZFS pools available for import without actually importing them.
+        Returns metadata for each pool so that the user can select which pool(s)
+        to import.
+    -->
+    <method name="ListImportablePools">
+      <arg name="options" direction="in" type="a{sv}"/>
+      <arg name="pools" direction="out" type="aa{sv}"/>
+    </method>
+
   </interface>
 
   <!-- ********************************************************************** -->

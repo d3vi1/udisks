@@ -529,10 +529,99 @@ handle_pool_import_all (UDisksManagerZFS      *_manager,
 
 /* ---------------------------------------------------------------------------------------------------- */
 
+static const gchar *
+importable_pool_state_to_string (BDZFSPoolState state)
+{
+  switch (state)
+    {
+    case BD_ZFS_POOL_STATE_ONLINE:
+      return "ONLINE";
+    case BD_ZFS_POOL_STATE_DEGRADED:
+      return "DEGRADED";
+    case BD_ZFS_POOL_STATE_FAULTED:
+      return "FAULTED";
+    case BD_ZFS_POOL_STATE_OFFLINE:
+      return "OFFLINE";
+    case BD_ZFS_POOL_STATE_REMOVED:
+      return "REMOVED";
+    case BD_ZFS_POOL_STATE_UNAVAIL:
+      return "UNAVAIL";
+    case BD_ZFS_POOL_STATE_UNKNOWN:
+    default:
+      return "UNKNOWN";
+    }
+}
+
+static gboolean
+handle_list_importable_pools (UDisksManagerZFS      *_manager,
+                              GDBusMethodInvocation *invocation,
+                              GVariant              *arg_options)
+{
+  UDisksLinuxManagerZFS *manager = UDISKS_LINUX_MANAGER_ZFS (_manager);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  BDZFSPoolInfo **infos = NULL;
+  GVariantBuilder pools_builder;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (manager->module));
+
+  /* Policy check — query tier only, no destructive action */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     NULL,
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to list importable ZFS pools"),
+                                     invocation);
+
+  infos = bd_zfs_pool_list_importable (&error);
+  if (infos == NULL && error != NULL)
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  g_variant_builder_init (&pools_builder, G_VARIANT_TYPE ("aa{sv}"));
+
+  if (infos != NULL)
+    {
+      for (BDZFSPoolInfo **p = infos; *p != NULL; p++)
+        {
+          BDZFSPoolInfo *info = *p;
+          GVariantBuilder dict_builder;
+
+          g_variant_builder_init (&dict_builder, G_VARIANT_TYPE ("a{sv}"));
+          g_variant_builder_add (&dict_builder, "{sv}", "name",
+                                 g_variant_new_string (info->name ? info->name : ""));
+          g_variant_builder_add (&dict_builder, "{sv}", "guid",
+                                 g_variant_new_string (info->guid ? info->guid : ""));
+          g_variant_builder_add (&dict_builder, "{sv}", "state",
+                                 g_variant_new_string (importable_pool_state_to_string (info->state)));
+          g_variant_builder_add_value (&pools_builder,
+                                       g_variant_builder_end (&dict_builder));
+        }
+    }
+
+  udisks_manager_zfs_complete_list_importable_pools (_manager,
+                                                      invocation,
+                                                      g_variant_builder_end (&pools_builder));
+
+ out:
+  if (infos != NULL)
+    {
+      for (BDZFSPoolInfo **p = infos; *p != NULL; p++)
+        bd_zfs_pool_info_free (*p);
+      g_free (infos);
+    }
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
 static void
 udisks_linux_manager_zfs_iface_init (UDisksManagerZFSIface *iface)
 {
   iface->handle_pool_create = handle_pool_create;
   iface->handle_pool_import = handle_pool_import;
   iface->handle_pool_import_all = handle_pool_import_all;
+  iface->handle_list_importable_pools = handle_list_importable_pools;
 }
