@@ -840,8 +840,9 @@ handle_list_datasets (UDisksZFSPool         *iface,
               break;
             }
 
-          /* Apply type filter if specified */
-          if (type_filter != NULL && g_strcmp0 (type_filter, type_str) != 0)
+          /* Apply type filter if specified ("all" or NULL means no filter) */
+          if (type_filter != NULL && g_strcmp0 (type_filter, "all") != 0
+              && g_strcmp0 (type_filter, type_str) != 0)
             continue;
 
           /* Apply offset */
