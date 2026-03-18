@@ -263,10 +263,27 @@ handle_poll (UDisksZFSPool         *iface,
              gpointer               user_data)
 {
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GVariant *options = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Build an empty options dict for the authorization check */
+  options = g_variant_new ("a{sv}", NULL);
+  g_variant_ref_sink (options);
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_QUERY,
+                                     options,
+                                     N_("Authentication is required to poll ZFS pool status"),
+                                     invocation);
 
   udisks_linux_module_zfs_trigger_update (object->module);
   udisks_zfspool_complete_poll (iface, invocation);
 
+ out:
+  g_variant_unref (options);
   return TRUE;
 }
 
@@ -912,6 +929,13 @@ handle_destroy_dataset (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
   /* Destruction requires the stronger manage-zfs-destroy policy */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
@@ -945,6 +969,13 @@ handle_mount_dataset (UDisksZFSPool         *iface,
   GError *error = NULL;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
 
   /* Policy check */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
@@ -986,6 +1017,13 @@ handle_unmount_dataset (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
   /* Policy check */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
@@ -1022,6 +1060,13 @@ handle_create_snapshot (UDisksZFSPool         *iface,
   gchar *full_name = NULL;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Cross-pool validation on the dataset part */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_dataset, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
 
   /* Policy check */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
@@ -1060,6 +1105,14 @@ handle_rollback_snapshot (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Cross-pool validation — snapshot names contain '@', validate
+   * the full name which starts with pool_name or pool_name/ */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
   /* Rollback can destroy newer snapshots, so use the stronger destroy policy */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
@@ -1095,6 +1148,13 @@ handle_clone_snapshot (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_snapshot, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
   /* Policy check */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
@@ -1129,6 +1189,18 @@ handle_rename_dataset (UDisksZFSPool         *iface,
   GError *error = NULL;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Cross-pool validation — both source and destination must belong to this pool */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_new_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
 
   /* Policy check */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
@@ -1167,6 +1239,13 @@ handle_set_dataset_property (UDisksZFSPool         *iface,
   const gchar *action_id;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_dataset, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
 
   if (arg_property == NULL || strlen (arg_property) == 0)
     {
@@ -1225,6 +1304,13 @@ handle_get_dataset_property (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_dataset, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
   /* Policy check */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
@@ -1275,6 +1361,13 @@ handle_load_key (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_dataset, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
                                      ZFS_POLICY_ACTION_ID,
@@ -1292,8 +1385,9 @@ handle_load_key (UDisksZFSPool         *iface,
 
       success = bd_zfs_encryption_load_key (arg_dataset, passphrase, &error);
 
-      /* SECURITY: zero out passphrase memory before freeing */
-      memset (passphrase, 0, len);
+      /* SECURITY: zero out passphrase memory before freeing;
+       * explicit_bzero() is not subject to dead-store elimination. */
+      explicit_bzero (passphrase, len);
       g_free (passphrase);
       g_variant_unref (passphrase_v);
     }
@@ -1332,6 +1426,13 @@ handle_unload_key (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_dataset, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
                                      ZFS_POLICY_ACTION_ID,
@@ -1366,6 +1467,13 @@ handle_change_key (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_dataset, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
   /* Changing encryption is destructive-level */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
@@ -1384,6 +1492,158 @@ handle_change_key (UDisksZFSPool         *iface,
 
   udisks_linux_module_zfs_trigger_update (object->module);
   udisks_zfspool_complete_change_key (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+/*  GetVdevTopology helpers                                                                             */
+/* ---------------------------------------------------------------------------------------------------- */
+
+static const gchar *
+vdev_type_to_string (BDZFSVdevType type)
+{
+  switch (type)
+    {
+    case BD_ZFS_VDEV_TYPE_DISK:
+      return "disk";
+    case BD_ZFS_VDEV_TYPE_FILE:
+      return "file";
+    case BD_ZFS_VDEV_TYPE_MIRROR:
+      return "mirror";
+    case BD_ZFS_VDEV_TYPE_RAIDZ:
+      return "raidz";
+    case BD_ZFS_VDEV_TYPE_REPLACING:
+      return "replacing";
+    case BD_ZFS_VDEV_TYPE_SPARE:
+      return "spare";
+    case BD_ZFS_VDEV_TYPE_LOG:
+      return "log";
+    case BD_ZFS_VDEV_TYPE_L2CACHE:
+      return "l2cache";
+    case BD_ZFS_VDEV_TYPE_ROOT:
+      return "root";
+    default:
+      return "unknown";
+    }
+}
+
+static const gchar *
+vdev_state_to_string (BDZFSVdevState state)
+{
+  switch (state)
+    {
+    case BD_ZFS_VDEV_STATE_ONLINE:
+      return "ONLINE";
+    case BD_ZFS_VDEV_STATE_DEGRADED:
+      return "DEGRADED";
+    case BD_ZFS_VDEV_STATE_FAULTED:
+      return "FAULTED";
+    case BD_ZFS_VDEV_STATE_OFFLINE:
+      return "OFFLINE";
+    case BD_ZFS_VDEV_STATE_UNAVAIL:
+      return "UNAVAIL";
+    case BD_ZFS_VDEV_STATE_REMOVED:
+      return "REMOVED";
+    default:
+      return "UNKNOWN";
+    }
+}
+
+/**
+ * vdev_info_to_variant:
+ * @vdev: A #BDZFSVdevInfo.
+ *
+ * Recursively converts a vdev info tree into a GVariant of type "a{sv}".
+ * Children are represented as a nested "aa{sv}" under the "children" key.
+ *
+ * Returns: (transfer full): A floating #GVariant of type "a{sv}".
+ */
+static GVariant *
+vdev_info_to_variant (BDZFSVdevInfo *vdev)
+{
+  GVariantBuilder builder;
+
+  g_variant_builder_init (&builder, G_VARIANT_TYPE ("a{sv}"));
+
+  g_variant_builder_add (&builder, "{sv}", "path",
+                         g_variant_new_string (vdev->path ? vdev->path : ""));
+  g_variant_builder_add (&builder, "{sv}", "type",
+                         g_variant_new_string (vdev_type_to_string (vdev->type)));
+  g_variant_builder_add (&builder, "{sv}", "state",
+                         g_variant_new_string (vdev_state_to_string (vdev->state)));
+  g_variant_builder_add (&builder, "{sv}", "read_errors",
+                         g_variant_new_uint64 (vdev->read_errors));
+  g_variant_builder_add (&builder, "{sv}", "write_errors",
+                         g_variant_new_uint64 (vdev->write_errors));
+  g_variant_builder_add (&builder, "{sv}", "checksum_errors",
+                         g_variant_new_uint64 (vdev->checksum_errors));
+
+  if (vdev->children != NULL)
+    {
+      GVariantBuilder children_builder;
+
+      g_variant_builder_init (&children_builder, G_VARIANT_TYPE ("aa{sv}"));
+      for (BDZFSVdevInfo **child = vdev->children; *child != NULL; child++)
+        g_variant_builder_add_value (&children_builder, vdev_info_to_variant (*child));
+      g_variant_builder_add (&builder, "{sv}", "children",
+                             g_variant_builder_end (&children_builder));
+    }
+
+  return g_variant_builder_end (&builder);
+}
+
+static gboolean
+handle_get_vdev_topology (UDisksZFSPool         *iface,
+                          GDBusMethodInvocation *invocation,
+                          GVariant              *arg_options,
+                          gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  BDZFSVdevInfo **vdevs = NULL;
+  GVariantBuilder topology_builder;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Policy check */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_QUERY,
+                                     arg_options,
+                                     N_("Authentication is required to query ZFS pool vdev topology"),
+                                     invocation);
+
+  vdevs = bd_zfs_pool_get_vdevs (object->name, &error);
+  if (vdevs == NULL)
+    {
+      if (error != NULL)
+        {
+          g_dbus_method_invocation_take_error (invocation, error);
+          goto out;
+        }
+    }
+
+  g_variant_builder_init (&topology_builder, G_VARIANT_TYPE ("aa{sv}"));
+
+  if (vdevs != NULL)
+    {
+      for (BDZFSVdevInfo **p = vdevs; *p != NULL; p++)
+        g_variant_builder_add_value (&topology_builder, vdev_info_to_variant (*p));
+    }
+
+  udisks_zfspool_complete_get_vdev_topology (iface, invocation,
+                                              g_variant_builder_end (&topology_builder));
+
+  /* Free the vdev info array */
+  if (vdevs != NULL)
+    {
+      for (BDZFSVdevInfo **p = vdevs; *p != NULL; p++)
+        bd_zfs_vdev_info_free (*p);
+      g_free (vdevs);
+    }
 
  out:
   return TRUE;
@@ -1468,6 +1728,8 @@ udisks_linux_pool_object_zfs_constructed (GObject *_object)
                     G_CALLBACK (handle_unload_key), object);
   g_signal_connect (object->iface_zfs_pool, "handle-change-key",
                     G_CALLBACK (handle_change_key), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-get-vdev-topology",
+                    G_CALLBACK (handle_get_vdev_topology), object);
 
   g_dbus_object_skeleton_add_interface (G_DBUS_OBJECT_SKELETON (object),
                                         G_DBUS_INTERFACE_SKELETON (object->iface_zfs_pool));

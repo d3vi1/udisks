@@ -317,7 +317,7 @@ handle_pool_create (UDisksManagerZFS      *_manager,
                                      N_("Authentication is required to create a ZFS pool"),
                                      invocation);
 
-  /* Validate pool name */
+  /* Validate pool name format */
   if (arg_name == NULL || strlen (arg_name) == 0)
     {
       g_dbus_method_invocation_return_error (invocation,
@@ -326,6 +326,41 @@ handle_pool_create (UDisksManagerZFS      *_manager,
                                              "Pool name must not be empty");
       goto out;
     }
+
+  /* ZFS pool names must start with a letter, and contain only
+   * alphanumeric characters, hyphens, underscores, and periods.
+   * Reserved prefixes (mirror, raidz, draid, spare) are disallowed. */
+  {
+    const gchar *p;
+    gboolean valid = TRUE;
+
+    if (!g_ascii_isalpha (arg_name[0]))
+      valid = FALSE;
+
+    for (p = arg_name; valid && *p != '\0'; p++)
+      {
+        if (!g_ascii_isalnum (*p) && *p != '-' && *p != '_' && *p != '.')
+          valid = FALSE;
+      }
+
+    if (valid && (g_str_has_prefix (arg_name, "mirror") ||
+                  g_str_has_prefix (arg_name, "raidz") ||
+                  g_str_has_prefix (arg_name, "draid") ||
+                  g_str_has_prefix (arg_name, "spare")))
+      valid = FALSE;
+
+    if (!valid)
+      {
+        g_dbus_method_invocation_return_error (invocation,
+                                               UDISKS_ERROR,
+                                               UDISKS_ERROR_FAILED,
+                                               "Invalid pool name '%s': must start with a letter, "
+                                               "contain only [a-zA-Z0-9_-.], and not use reserved "
+                                               "prefixes (mirror, raidz, draid, spare)",
+                                               arg_name);
+        goto out;
+      }
+  }
 
   /* Resolve block object paths to device paths */
   device_paths = resolve_blocks_to_device_paths (daemon, arg_blocks, invocation, NULL);

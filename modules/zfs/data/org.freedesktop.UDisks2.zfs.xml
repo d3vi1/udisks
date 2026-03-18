@@ -443,6 +443,20 @@
       <arg name="options" direction="in" type="a{sv}"/>
     </method>
 
+    <!--
+        GetVdevTopology:
+        @options: Additional options.
+        @topology: An array of dictionaries describing the vdev tree.
+
+        Returns the vdev topology for the pool.  Each dictionary entry
+        represents a vdev and may contain a "children" key holding a
+        nested array of the same type.
+    -->
+    <method name="GetVdevTopology">
+      <arg name="options" direction="in" type="a{sv}"/>
+      <arg name="topology" direction="out" type="aa{sv}"/>
+    </method>
+
   </interface>
 
   <!-- ********************************************************************** -->
