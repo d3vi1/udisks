@@ -288,6 +288,51 @@
     </method>
 
     <!--
+        TrimStop:
+        @options: Additional options.
+
+        Stops a running TRIM on the pool (zpool trim -s).
+    -->
+    <method name="TrimStop">
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        ClearErrors:
+        @device: The device name to clear errors on (or empty for the whole pool).
+        @options: Additional options.
+
+        Clears errors on the pool or a specific device (zpool clear).
+    -->
+    <method name="ClearErrors">
+      <arg name="device" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        Upgrade:
+        @options: Additional options.
+
+        Upgrades the pool to the latest on-disk format version.
+        WARNING: This operation is irreversible (zpool upgrade).
+    -->
+    <method name="Upgrade">
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        GetHistory:
+        @options: Additional options.
+        @history: The pool history output.
+
+        Returns the command history for the pool (zpool history).
+    -->
+    <method name="GetHistory">
+      <arg name="options" direction="in" type="a{sv}"/>
+      <arg name="history" direction="out" type="s"/>
+    </method>
+
+    <!--
         SetProperty:
         @name: The property name.
         @value: The property value.
@@ -524,6 +569,102 @@
     -->
     <method name="ChangeKey">
       <arg name="dataset" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        PromoteClone:
+        @clone_name: The clone dataset name to promote.
+        @options: Additional options.
+
+        Promotes a clone dataset to no longer depend on its origin snapshot
+        (zfs promote).
+    -->
+    <method name="PromoteClone">
+      <arg name="clone_name" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        HoldSnapshot:
+        @snapshot: The snapshot name.
+        @tag: The hold tag name.
+        @options: Additional options.
+
+        Places a hold on a snapshot, preventing it from being destroyed
+        (zfs hold).
+    -->
+    <method name="HoldSnapshot">
+      <arg name="snapshot" direction="in" type="s"/>
+      <arg name="tag" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        ReleaseSnapshot:
+        @snapshot: The snapshot name.
+        @tag: The hold tag name to release.
+        @options: Additional options.
+
+        Releases a hold on a snapshot (zfs release).
+    -->
+    <method name="ReleaseSnapshot">
+      <arg name="snapshot" direction="in" type="s"/>
+      <arg name="tag" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        InheritProperty:
+        @dataset: The dataset name.
+        @property: The property name to inherit.
+        @options: Additional options.
+
+        Resets a dataset property to be inherited from its parent (zfs inherit).
+    -->
+    <method name="InheritProperty">
+      <arg name="dataset" direction="in" type="s"/>
+      <arg name="property" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        ResizeVolume:
+        @name: The zvol name.
+        @new_size: The new size in bytes.
+        @options: Additional options.
+
+        Resizes a ZFS volume (zfs set volsize=).
+    -->
+    <method name="ResizeVolume">
+      <arg name="name" direction="in" type="s"/>
+      <arg name="new_size" direction="in" type="t"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        CreateBookmark:
+        @snapshot: The snapshot name to bookmark.
+        @bookmark: The bookmark name.
+        @options: Additional options.
+
+        Creates a bookmark from a snapshot (zfs bookmark).
+    -->
+    <method name="CreateBookmark">
+      <arg name="snapshot" direction="in" type="s"/>
+      <arg name="bookmark" direction="in" type="s"/>
+      <arg name="options" direction="in" type="a{sv}"/>
+    </method>
+
+    <!--
+        DestroyBookmark:
+        @name: The bookmark name to destroy.
+        @options: Additional options.
+
+        Destroys a ZFS bookmark (zfs destroy).
+    -->
+    <method name="DestroyBookmark">
+      <arg name="name" direction="in" type="s"/>
       <arg name="options" direction="in" type="a{sv}"/>
     </method>
 

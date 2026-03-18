@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include <blockdev/zfs.h>
+#include <blockdev/utils.h>
 
 #include <src/udiskslogging.h>
 #include <src/udisksdaemon.h>
@@ -1849,6 +1850,487 @@ handle_get_vdev_topology (UDisksZFSPool         *iface,
 
 /* ---------------------------------------------------------------------------------------------------- */
 
+static gboolean
+handle_trim_stop (UDisksZFSPool         *iface,
+                  GDBusMethodInvocation *invocation,
+                  GVariant              *arg_options,
+                  gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to stop a ZFS pool TRIM"),
+                                     invocation);
+
+  if (!bd_zfs_pool_trim_stop (object->name, NULL, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_trim_stop (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_clear_errors (UDisksZFSPool         *iface,
+                     GDBusMethodInvocation *invocation,
+                     const gchar           *arg_device,
+                     GVariant              *arg_options,
+                     gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to clear ZFS pool errors"),
+                                     invocation);
+
+  if (!bd_zfs_pool_clear (object->name,
+                           (arg_device && strlen (arg_device) > 0) ? arg_device : NULL,
+                           &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_clear_errors (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_upgrade (UDisksZFSPool         *iface,
+                GDBusMethodInvocation *invocation,
+                GVariant              *arg_options,
+                gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Upgrade is irreversible, use the destroy-level policy */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_DESTROY,
+                                     arg_options,
+                                     N_("Authentication is required to upgrade a ZFS pool"),
+                                     invocation);
+
+  if (!bd_zfs_pool_upgrade (object->name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_upgrade (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_get_history (UDisksZFSPool         *iface,
+                    GDBusMethodInvocation *invocation,
+                    GVariant              *arg_options,
+                    gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  gchar *output = NULL;
+  const gchar *argv[] = { "zpool", "history", object->name, NULL };
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_QUERY,
+                                     arg_options,
+                                     N_("Authentication is required to view ZFS pool history"),
+                                     invocation);
+
+  if (!bd_utils_exec_and_capture_output (argv, NULL, &output, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_zfspool_complete_get_history (iface, invocation, output ? output : "");
+
+ out:
+  g_free (output);
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_promote_clone (UDisksZFSPool         *iface,
+                      GDBusMethodInvocation *invocation,
+                      const gchar           *arg_clone_name,
+                      GVariant              *arg_options,
+                      gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_clone_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
+  /* Promote is constructive, use manage-zfs policy */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to promote a ZFS clone"),
+                                     invocation);
+
+  if (!bd_zfs_dataset_promote (arg_clone_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_promote_clone (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_hold_snapshot (UDisksZFSPool         *iface,
+                      GDBusMethodInvocation *invocation,
+                      const gchar           *arg_snapshot,
+                      const gchar           *arg_tag,
+                      GVariant              *arg_options,
+                      gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_snapshot, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
+  if (arg_tag == NULL || strlen (arg_tag) == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Hold tag must not be empty");
+      goto out;
+    }
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to hold a ZFS snapshot"),
+                                     invocation);
+
+  if (!bd_zfs_snapshot_hold (arg_snapshot, arg_tag, FALSE, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_zfspool_complete_hold_snapshot (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_release_snapshot (UDisksZFSPool         *iface,
+                         GDBusMethodInvocation *invocation,
+                         const gchar           *arg_snapshot,
+                         const gchar           *arg_tag,
+                         GVariant              *arg_options,
+                         gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_snapshot, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
+  if (arg_tag == NULL || strlen (arg_tag) == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Hold tag must not be empty");
+      goto out;
+    }
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to release a ZFS snapshot hold"),
+                                     invocation);
+
+  if (!bd_zfs_snapshot_release (arg_snapshot, arg_tag, FALSE, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_zfspool_complete_release_snapshot (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_inherit_property (UDisksZFSPool         *iface,
+                         GDBusMethodInvocation *invocation,
+                         const gchar           *arg_dataset,
+                         const gchar           *arg_property,
+                         GVariant              *arg_options,
+                         gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_dataset, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
+  if (arg_property == NULL || strlen (arg_property) == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Property name must not be empty");
+      goto out;
+    }
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to inherit a ZFS dataset property"),
+                                     invocation);
+
+  if (!bd_zfs_dataset_inherit (arg_dataset, arg_property, FALSE, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_inherit_property (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_resize_volume (UDisksZFSPool         *iface,
+                      GDBusMethodInvocation *invocation,
+                      const gchar           *arg_name,
+                      guint64                arg_new_size,
+                      GVariant              *arg_options,
+                      gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+  gchar *size_str = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
+  if (arg_new_size == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "New size must be greater than zero");
+      goto out;
+    }
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to resize a ZFS volume"),
+                                     invocation);
+
+  size_str = g_strdup_printf ("%" G_GUINT64_FORMAT, arg_new_size);
+
+  if (!bd_zfs_dataset_set_property (arg_name, "volsize", size_str, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_resize_volume (iface, invocation);
+
+ out:
+  g_free (size_str);
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_create_bookmark (UDisksZFSPool         *iface,
+                        GDBusMethodInvocation *invocation,
+                        const gchar           *arg_snapshot,
+                        const gchar           *arg_bookmark,
+                        GVariant              *arg_options,
+                        gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_snapshot, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID,
+                                     arg_options,
+                                     N_("Authentication is required to create a ZFS bookmark"),
+                                     invocation);
+
+  if (!bd_zfs_bookmark_create (arg_snapshot, arg_bookmark, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_create_bookmark (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
+static gboolean
+handle_destroy_bookmark (UDisksZFSPool         *iface,
+                         GDBusMethodInvocation *invocation,
+                         const gchar           *arg_name,
+                         GVariant              *arg_options,
+                         gpointer               user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksDaemon *daemon;
+  GError *error = NULL;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
+
+  /* Cross-pool validation */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
+  /* Bookmark destruction uses destroy-level policy */
+  UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
+                                     UDISKS_OBJECT (object),
+                                     ZFS_POLICY_ACTION_ID_DESTROY,
+                                     arg_options,
+                                     N_("Authentication is required to destroy a ZFS bookmark"),
+                                     invocation);
+
+  if (!bd_zfs_bookmark_destroy (arg_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  udisks_linux_module_zfs_trigger_update (object->module);
+  udisks_zfspool_complete_destroy_bookmark (iface, invocation);
+
+ out:
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+
 static void
 udisks_linux_pool_object_zfs_constructed (GObject *_object)
 {
@@ -1900,6 +2382,14 @@ udisks_linux_pool_object_zfs_constructed (GObject *_object)
                     G_CALLBACK (handle_scrub_stop), object);
   g_signal_connect (object->iface_zfs_pool, "handle-trim-start",
                     G_CALLBACK (handle_trim_start), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-trim-stop",
+                    G_CALLBACK (handle_trim_stop), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-clear-errors",
+                    G_CALLBACK (handle_clear_errors), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-upgrade",
+                    G_CALLBACK (handle_upgrade), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-get-history",
+                    G_CALLBACK (handle_get_history), object);
   g_signal_connect (object->iface_zfs_pool, "handle-set-property",
                     G_CALLBACK (handle_set_property), object);
   g_signal_connect (object->iface_zfs_pool, "handle-get-property",
@@ -1938,6 +2428,22 @@ udisks_linux_pool_object_zfs_constructed (GObject *_object)
                     G_CALLBACK (handle_change_key), object);
   g_signal_connect (object->iface_zfs_pool, "handle-get-vdev-topology",
                     G_CALLBACK (handle_get_vdev_topology), object);
+
+  /* New dataset/snapshot/bookmark methods */
+  g_signal_connect (object->iface_zfs_pool, "handle-promote-clone",
+                    G_CALLBACK (handle_promote_clone), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-hold-snapshot",
+                    G_CALLBACK (handle_hold_snapshot), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-release-snapshot",
+                    G_CALLBACK (handle_release_snapshot), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-inherit-property",
+                    G_CALLBACK (handle_inherit_property), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-resize-volume",
+                    G_CALLBACK (handle_resize_volume), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-create-bookmark",
+                    G_CALLBACK (handle_create_bookmark), object);
+  g_signal_connect (object->iface_zfs_pool, "handle-destroy-bookmark",
+                    G_CALLBACK (handle_destroy_bookmark), object);
 
   g_dbus_object_skeleton_add_interface (G_DBUS_OBJECT_SKELETON (object),
                                         G_DBUS_INTERFACE_SKELETON (object->iface_zfs_pool));
