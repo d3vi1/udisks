@@ -327,26 +327,31 @@ handle_pool_create (UDisksManagerZFS      *_manager,
       goto out;
     }
 
-  /* ZFS pool names must start with a letter, and contain only
-   * alphanumeric characters, hyphens, underscores, and periods.
-   * Reserved prefixes (mirror, raidz, draid, spare) are disallowed. */
+  /* ZFS pool names must start with a letter, contain only
+   * alphanumeric characters plus _ - . :, be at most 239 characters,
+   * and not begin with a reserved prefix (mirror, raidz, draid, spare,
+   * log).  These rules mirror what libblockdev/zfs enforce. */
   {
     const gchar *p;
     gboolean valid = TRUE;
 
-    if (!g_ascii_isalpha (arg_name[0]))
+    if (strlen (arg_name) > 239)
+      valid = FALSE;
+
+    if (valid && !g_ascii_isalpha (arg_name[0]))
       valid = FALSE;
 
     for (p = arg_name; valid && *p != '\0'; p++)
       {
-        if (!g_ascii_isalnum (*p) && *p != '-' && *p != '_' && *p != '.')
+        if (!g_ascii_isalnum (*p) && *p != '-' && *p != '_' && *p != '.' && *p != ':')
           valid = FALSE;
       }
 
     if (valid && (g_str_has_prefix (arg_name, "mirror") ||
                   g_str_has_prefix (arg_name, "raidz") ||
                   g_str_has_prefix (arg_name, "draid") ||
-                  g_str_has_prefix (arg_name, "spare")))
+                  g_str_has_prefix (arg_name, "spare") ||
+                  g_str_has_prefix (arg_name, "log")))
       valid = FALSE;
 
     if (!valid)
@@ -355,8 +360,9 @@ handle_pool_create (UDisksManagerZFS      *_manager,
                                                UDISKS_ERROR,
                                                UDISKS_ERROR_FAILED,
                                                "Invalid pool name '%s': must start with a letter, "
-                                               "contain only [a-zA-Z0-9_-.], and not use reserved "
-                                               "prefixes (mirror, raidz, draid, spare)",
+                                               "contain only [a-zA-Z0-9_-.:], be at most 239 "
+                                               "characters, and not use reserved prefixes "
+                                               "(mirror, raidz, draid, spare, log)",
                                                arg_name);
         goto out;
       }
@@ -366,6 +372,11 @@ handle_pool_create (UDisksManagerZFS      *_manager,
   device_paths = resolve_blocks_to_device_paths (daemon, arg_blocks, invocation, NULL);
   if (device_paths == NULL)
     goto out;
+
+  /* Normalize empty vdev_type to NULL (stripe).  libblockdev treats
+   * non-NULL as a real argv token, so "" would be a bogus raid level. */
+  if (arg_vdev_type != NULL && arg_vdev_type[0] == '\0')
+    arg_vdev_type = NULL;
 
   /* Create the pool */
   if (!bd_zfs_pool_create (arg_name,

@@ -390,6 +390,11 @@ handle_add_vdev (UDisksZFSPool         *iface,
   if (device_paths == NULL)
     goto out;
 
+  /* Normalize empty vdev_type to NULL (stripe).  libblockdev treats
+   * non-NULL as a real argv token, so "" would be a bogus raid level. */
+  if (arg_vdev_type != NULL && arg_vdev_type[0] == '\0')
+    arg_vdev_type = NULL;
+
   if (!bd_zfs_pool_add_vdev (object->name,
                              (const gchar **) device_paths,
                              arg_vdev_type,
@@ -1691,6 +1696,20 @@ handle_load_key (UDisksZFSPool         *iface,
     }
   else if (g_variant_lookup (arg_options, "key_location", "&s", &key_location))
     {
+      /* Validate key_location: only "prompt", "file://..." and "pkcs11:..."
+       * are legitimate ZFS key location schemes. */
+      if (g_strcmp0 (key_location, "prompt") != 0 &&
+          !g_str_has_prefix (key_location, "file://") &&
+          !g_str_has_prefix (key_location, "pkcs11:"))
+        {
+          g_dbus_method_invocation_return_error (invocation,
+                                                 UDISKS_ERROR,
+                                                 UDISKS_ERROR_FAILED,
+                                                 "Invalid key_location '%s': must be 'prompt', "
+                                                 "'file://...' or 'pkcs11:...'",
+                                                 key_location);
+          goto out;
+        }
       success = bd_zfs_encryption_load_key (arg_dataset, key_location, &error);
     }
   else
@@ -1781,6 +1800,21 @@ handle_change_key (UDisksZFSPool         *iface,
                                      invocation);
 
   g_variant_lookup (arg_options, "new_key_location", "&s", &new_key_location);
+
+  /* Validate new_key_location if provided */
+  if (new_key_location != NULL &&
+      g_strcmp0 (new_key_location, "prompt") != 0 &&
+      !g_str_has_prefix (new_key_location, "file://") &&
+      !g_str_has_prefix (new_key_location, "pkcs11:"))
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Invalid new_key_location '%s': must be 'prompt', "
+                                             "'file://...' or 'pkcs11:...'",
+                                             new_key_location);
+      goto out;
+    }
 
   if (!bd_zfs_encryption_change_key (arg_dataset, new_key_location, NULL, &error))
     {
