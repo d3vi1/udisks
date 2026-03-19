@@ -22,6 +22,10 @@ if HAVE_LSM
 MODULES += lsm
 endif
 
+if HAVE_ZFS
+MODULES += zfs
+endif
+
 $(CONFIG_H_PY):
 	echo -n 'UDISKS_MODULES_ENABLED = set([' > $(CONFIG_H_PY)
 	for i in $(MODULES); do \
