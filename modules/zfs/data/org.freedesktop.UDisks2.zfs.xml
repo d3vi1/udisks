@@ -461,7 +461,28 @@
         @name: The dataset name to mount.
         @options: Additional options.
 
-        Mounts a ZFS dataset.
+        Mounts a ZFS dataset.  The safety defaults
+        <literal>nosuid,nodev</literal> are always prepended to the
+        mount options, matching the core UDisks mount policy.
+
+        Known options:
+          <variablelist>
+            <varlistentry>
+              <term>mount_options (type 's')</term>
+              <listitem><para>
+                Comma-separated mount options to append after the
+                mandatory <literal>nosuid,nodev</literal> defaults.
+                Options containing newlines or tabs are rejected.
+              </para></listitem>
+            </varlistentry>
+            <varlistentry>
+              <term>mountpoint (type 's')</term>
+              <listitem><para>
+                Mountpoint override.  If not set, the dataset's own
+                <literal>mountpoint</literal> property is used.
+              </para></listitem>
+            </varlistentry>
+          </variablelist>
     -->
     <method name="MountDataset">
       <arg name="name" direction="in" type="s"/>

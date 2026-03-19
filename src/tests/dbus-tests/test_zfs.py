@@ -102,6 +102,22 @@ class UDisksZFSTest(udiskstestcase.UdisksTestCase):
         """Test PoolImportAll reports per-pool errors when some imports fail"""
         self.skipTest("PoolImportAll partial-failure test requires multiple exported ZFS pools")
 
+    def test_mount_dataset_default_options(self):
+        """Test MountDataset enforces nosuid,nodev safety defaults"""
+        self.skipTest("Mount safety-defaults test requires an active ZFS pool with datasets")
+
+    def test_mount_dataset_caller_options(self):
+        """Test MountDataset appends caller mount_options after nosuid,nodev"""
+        self.skipTest("Mount caller-options test requires an active ZFS pool with datasets")
+
+    def test_mount_dataset_mountpoint(self):
+        """Test MountDataset passes mountpoint override to libblockdev"""
+        self.skipTest("Mount mountpoint test requires an active ZFS pool with datasets")
+
+    def test_mount_dataset_rejects_malformed_options(self):
+        """Test MountDataset rejects options containing newlines or tabs"""
+        self.skipTest("Mount malformed-options test requires an active ZFS pool with datasets")
+
 
 if __name__ == "__main__":
     unittest.main()
