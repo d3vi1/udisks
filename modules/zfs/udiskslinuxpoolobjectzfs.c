@@ -890,6 +890,14 @@ handle_create_dataset (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Validate that the name component doesn't contain path/snapshot/bookmark separators */
+  if (strchr (arg_name, '/') || strchr (arg_name, '@') || strchr (arg_name, '#'))
+    {
+      g_dbus_method_invocation_return_error (invocation, UDISKS_ERROR, UDISKS_ERROR_FAILED,
+                                             "Dataset name component cannot contain '/', '@', or '#'");
+      goto out;
+    }
+
   /* Policy check */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
@@ -899,6 +907,13 @@ handle_create_dataset (UDisksZFSPool         *iface,
                                      invocation);
 
   full_name = g_strdup_printf ("%s/%s", object->name, arg_name);
+
+  /* Cross-pool validation on the constructed name */
+  if (!udisks_zfs_validate_name_in_pool (object->name, full_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
 
   if (!bd_zfs_dataset_create (full_name, NULL, &error))
     {
@@ -929,6 +944,14 @@ handle_create_volume (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Validate that the name component doesn't contain path/snapshot/bookmark separators */
+  if (strchr (arg_name, '/') || strchr (arg_name, '@') || strchr (arg_name, '#'))
+    {
+      g_dbus_method_invocation_return_error (invocation, UDISKS_ERROR, UDISKS_ERROR_FAILED,
+                                             "Volume name component cannot contain '/', '@', or '#'");
+      goto out;
+    }
+
   /* Policy check */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
@@ -938,6 +961,13 @@ handle_create_volume (UDisksZFSPool         *iface,
                                      invocation);
 
   full_name = g_strdup_printf ("%s/%s", object->name, arg_name);
+
+  /* Cross-pool validation on the constructed name */
+  if (!udisks_zfs_validate_name_in_pool (object->name, full_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
 
   if (!bd_zfs_zvol_create (full_name, arg_size, FALSE, NULL, &error))
     {
@@ -1256,6 +1286,14 @@ handle_create_snapshot (UDisksZFSPool         *iface,
     {
       g_dbus_method_invocation_take_error (invocation, error);
       return TRUE;
+    }
+
+  /* Validate that the snapshot name component doesn't contain separators */
+  if (strchr (arg_snap_name, '/') || strchr (arg_snap_name, '@') || strchr (arg_snap_name, '#'))
+    {
+      g_dbus_method_invocation_return_error (invocation, UDISKS_ERROR, UDISKS_ERROR_FAILED,
+                                             "Snapshot name component cannot contain '/', '@', or '#'");
+      goto out;
     }
 
   /* Policy check */
@@ -2164,6 +2202,8 @@ handle_inherit_property (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  GError *prop_error = NULL;
+  const gchar *action_id;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
@@ -2183,9 +2223,22 @@ handle_inherit_property (UDisksZFSPool         *iface,
       goto out;
     }
 
+  /* Check property against the allowlist */
+  if (!udisks_zfs_property_is_allowed (arg_property, &prop_error))
+    {
+      g_dbus_method_invocation_take_error (invocation, prop_error);
+      goto out;
+    }
+
+  /* Security-sensitive properties require elevated authorization */
+  if (udisks_zfs_property_is_safe (arg_property, NULL))
+    action_id = ZFS_POLICY_ACTION_ID;
+  else
+    action_id = ZFS_POLICY_ACTION_ID_DESTROY;
+
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
-                                     ZFS_POLICY_ACTION_ID,
+                                     action_id,
                                      arg_options,
                                      N_("Authentication is required to inherit a ZFS dataset property"),
                                      invocation);
@@ -2277,6 +2330,13 @@ handle_create_bookmark (UDisksZFSPool         *iface,
 
   /* Cross-pool validation */
   if (!udisks_zfs_validate_name_in_pool (object->name, arg_snapshot, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      return TRUE;
+    }
+
+  /* Cross-pool validation on the bookmark name */
+  if (!udisks_zfs_validate_name_in_pool (object->name, arg_bookmark, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       return TRUE;
