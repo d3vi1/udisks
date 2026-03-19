@@ -86,6 +86,22 @@ class UDisksZFSTest(udiskstestcase.UdisksTestCase):
         """Test PoolImport by GUID with new_name option"""
         self.skipTest("Import-by-GUID-with-new_name test requires an exported ZFS pool")
 
+    def test_pool_import_all_default(self):
+        """Test PoolImportAll imports all available pools without force"""
+        self.skipTest("PoolImportAll test requires exported ZFS pools")
+
+    def test_pool_import_all_force(self):
+        """Test PoolImportAll with force=True passes -f to each pool import"""
+        self.skipTest("PoolImportAll test requires exported ZFS pools")
+
+    def test_pool_import_all_no_pools(self):
+        """Test PoolImportAll succeeds gracefully when no pools are importable"""
+        self.skipTest("PoolImportAll test requires no exported ZFS pools present")
+
+    def test_pool_import_all_partial_failure(self):
+        """Test PoolImportAll reports per-pool errors when some imports fail"""
+        self.skipTest("PoolImportAll partial-failure test requires multiple exported ZFS pools")
+
 
 if __name__ == "__main__":
     unittest.main()
