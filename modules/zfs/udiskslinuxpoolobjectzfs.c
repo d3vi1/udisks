@@ -1113,6 +1113,8 @@ handle_destroy_dataset (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  GError *local_error = NULL;
+  gboolean force = FALSE;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
@@ -1131,10 +1133,28 @@ handle_destroy_dataset (UDisksZFSPool         *iface,
                                      N_("Authentication is required to destroy a ZFS dataset"),
                                      invocation);
 
-  /* Try to unmount first (ignore errors — it may already be unmounted) */
-  bd_zfs_dataset_unmount (arg_name, TRUE, NULL);
+  /* Honor the caller's "force" option.  When force=FALSE (the default),
+   * a busy dataset will cause the operation to fail rather than
+   * force-unmounting it behind the user's back.  When force=TRUE,
+   * we force-unmount and pass force to destroy as well. */
+  g_variant_lookup (arg_options, "force", "b", &force);
 
-  if (!bd_zfs_dataset_destroy (arg_name, arg_recursive, TRUE, &error))
+  if (!bd_zfs_dataset_unmount (arg_name, force, &local_error))
+    {
+      if (!force)
+        {
+          /* Non-force unmount failed — report to caller instead of
+           * silently retrying with force */
+          g_dbus_method_invocation_return_gerror (invocation, local_error);
+          g_error_free (local_error);
+          goto out;
+        }
+      /* force=TRUE: unmount may still fail (e.g. already unmounted),
+       * which is harmless — clear and proceed to destroy */
+      g_clear_error (&local_error);
+    }
+
+  if (!bd_zfs_dataset_destroy (arg_name, arg_recursive, force, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
@@ -1292,6 +1312,7 @@ handle_rollback_snapshot (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  gboolean force = FALSE;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
@@ -1311,7 +1332,13 @@ handle_rollback_snapshot (UDisksZFSPool         *iface,
                                      N_("Authentication is required to rollback a ZFS snapshot"),
                                      invocation);
 
-  if (!bd_zfs_snapshot_rollback (arg_name, FALSE, TRUE, &error))
+  /* Honor the caller's "force" option.  When force=TRUE, dependent
+   * file systems and clones that would be destroyed by the rollback
+   * are force-unmounted.  The default (force=FALSE) causes the
+   * operation to fail if any dependent dataset is in use. */
+  g_variant_lookup (arg_options, "force", "b", &force);
+
+  if (!bd_zfs_snapshot_rollback (arg_name, FALSE, force, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
@@ -1346,7 +1373,19 @@ handle_clone_snapshot (UDisksZFSPool         *iface,
       return TRUE;
     }
 
-  /* If the clone name doesn't contain a '/', prepend the pool name */
+  /* Clone destination name handling:
+   *
+   * If the clone name is a bare name (no '/'), we prepend the pool name
+   * so that "myclone" becomes "poolname/myclone".  This is a convenience
+   * for callers who want the clone at the pool root.
+   *
+   * If the clone name contains a '/', it is used as-is but must still
+   * pass the cross-pool validation below.  This means cross-pool clones
+   * (cloning a snapshot into a different pool) are rejected by design —
+   * the D-Bus object represents a single pool, and allowing writes to
+   * another pool's namespace via this object would be a privilege issue.
+   * Cross-pool cloning would require calling the target pool's D-Bus
+   * object instead. */
   if (strchr (arg_clone_name, '/') == NULL)
     full_clone_name = g_strdup_printf ("%s/%s", object->name, arg_clone_name);
   else
@@ -1459,6 +1498,21 @@ handle_set_dataset_property (UDisksZFSPool         *iface,
                                              UDISKS_ERROR,
                                              UDISKS_ERROR_FAILED,
                                              "Property name must not be empty");
+      goto out;
+    }
+
+  /* Reject pool-only properties — they are valid on pool objects but
+   * meaningless on datasets; give a clear error rather than letting
+   * ZFS fail with a confusing message. */
+  if (udisks_zfs_property_is_pool_only (arg_property))
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_OPTION_NOT_PERMITTED,
+                                             "Property '%s' is a pool-level property and "
+                                             "cannot be set on a dataset; use SetProperty "
+                                             "on the pool object instead",
+                                             arg_property);
       goto out;
     }
 
@@ -1986,9 +2040,12 @@ handle_get_history (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Pool history contains operational audit data (who did what, when).
+   * This should not be freely queryable by any local user — require
+   * manage-zfs (auth_admin_keep) rather than query (allow_active=yes). */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
-                                     ZFS_POLICY_ACTION_ID_QUERY,
+                                     ZFS_POLICY_ACTION_ID,
                                      arg_options,
                                      N_("Authentication is required to view ZFS pool history"),
                                      invocation);

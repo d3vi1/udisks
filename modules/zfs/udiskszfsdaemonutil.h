@@ -30,6 +30,8 @@ gboolean udisks_zfs_property_is_safe    (const gchar  *property,
 gboolean udisks_zfs_property_is_allowed (const gchar  *property,
                                           GError      **error);
 
+gboolean udisks_zfs_property_is_pool_only (const gchar *property);
+
 gboolean udisks_zfs_validate_name_in_pool (const gchar  *pool_name,
                                             const gchar  *name,
                                             GError      **error);

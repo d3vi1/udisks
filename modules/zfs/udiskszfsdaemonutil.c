@@ -91,6 +91,48 @@ static const gchar * const sensitive_properties[] =
   NULL
 };
 
+/* Properties that only apply to pools, not datasets.  These overlap
+ * with safe_properties[] above (they are allowed on pool objects), but
+ * must be rejected when a caller tries to set them via
+ * SetDatasetProperty, since ZFS would return a confusing error or
+ * silently ignore them. */
+static const gchar * const pool_only_properties[] =
+{
+  "autoexpand",
+  "autoreplace",
+  "comment",
+  "delegation",
+  "failmode",
+  "listsnapshots",
+  "multihost",
+  NULL
+};
+
+/**
+ * udisks_zfs_property_is_pool_only:
+ * @property: A ZFS property name.
+ *
+ * Checks whether @property is a pool-only property that should not be
+ * set on datasets.
+ *
+ * Returns: %TRUE if @property is pool-only.
+ */
+gboolean
+udisks_zfs_property_is_pool_only (const gchar *property)
+{
+  guint i;
+
+  g_return_val_if_fail (property != NULL, FALSE);
+
+  for (i = 0; pool_only_properties[i] != NULL; i++)
+    {
+      if (g_strcmp0 (property, pool_only_properties[i]) == 0)
+        return TRUE;
+    }
+
+  return FALSE;
+}
+
 /**
  * is_user_property:
  * @property: A ZFS property name.

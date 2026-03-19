@@ -501,10 +501,12 @@ handle_pool_import_all (UDisksManagerZFS      *_manager,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (manager->module));
 
-  /* Policy check */
+  /* Bulk-importing every available pool is a higher-privilege operation
+   * than importing a single named pool: it can activate pools the admin
+   * did not intend to bring online.  Use the destroy (auth_admin) tier. */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      NULL,
-                                     ZFS_POLICY_ACTION_ID,
+                                     ZFS_POLICY_ACTION_ID_DESTROY,
                                      arg_options,
                                      N_("Authentication is required to import all ZFS pools"),
                                      invocation);
@@ -565,10 +567,11 @@ handle_list_importable_pools (UDisksManagerZFS      *_manager,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (manager->module));
 
-  /* Policy check — query tier only, no destructive action */
+  /* Listing importable pools is a read-only query — use the query tier
+   * so that active-session users can enumerate without admin auth. */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      NULL,
-                                     ZFS_POLICY_ACTION_ID,
+                                     ZFS_POLICY_ACTION_ID_QUERY,
                                      arg_options,
                                      N_("Authentication is required to list importable ZFS pools"),
                                      invocation);
