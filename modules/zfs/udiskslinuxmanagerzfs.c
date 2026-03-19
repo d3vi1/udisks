@@ -421,12 +421,14 @@ handle_pool_import (UDisksManagerZFS      *_manager,
   UDisksDaemon *daemon;
   GError *error = NULL;
   gboolean force = FALSE;
+  const gchar *new_name = NULL;
   UDisksObject *pool_object = NULL;
   WaitForPoolObjectData wait_data;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (manager->module));
 
   g_variant_lookup (arg_options, "force", "b", &force);
+  g_variant_lookup (arg_options, "new_name", "&s", &new_name);
 
   /* Use the destroy policy for force imports, regular policy otherwise */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
@@ -460,9 +462,15 @@ handle_pool_import (UDisksManagerZFS      *_manager,
   /* Trigger update so the imported pool object appears */
   udisks_linux_module_zfs_trigger_update (manager->module);
 
-  /* Wait for the pool object to show up */
+  /* Wait for the pool object to show up.  The hash table is keyed by
+   * pool name, so when importing by GUID we need a name to look up.
+   * Use new_name (from options) if provided; otherwise fall back to
+   * arg_name_or_guid which works for name-based imports.
+   *
+   * TODO: bare GUID import without new_name will fail at D-Bus object
+   * resolution because the GUID does not match any pool name key. */
   wait_data.module = manager->module;
-  wait_data.name = arg_name_or_guid;
+  wait_data.name = (new_name != NULL && *new_name != '\0') ? new_name : arg_name_or_guid;
   pool_object = udisks_daemon_wait_for_object_sync (daemon,
                                                      wait_for_pool_object,
                                                      &wait_data,
