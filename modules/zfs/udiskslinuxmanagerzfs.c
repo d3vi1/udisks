@@ -23,7 +23,6 @@
 #include <string.h>
 
 #include <blockdev/zfs.h>
-#include <blockdev/utils.h>
 
 #include <src/udisksdaemon.h>
 #include <src/udisksdaemonutil.h>
@@ -601,13 +600,20 @@ handle_pool_import_all (UDisksManagerZFS      *_manager,
   UDisksLinuxManagerZFS *manager = UDISKS_LINUX_MANAGER_ZFS (_manager);
   UDisksDaemon *daemon;
   GError *error = NULL;
-  const gchar *argv[] = { "zpool", "import", "-a", NULL };
+  BDZFSPoolInfo **importable = NULL;
+  BDZFSPoolInfo **p;
+  gboolean force = FALSE;
+  GString *errors_str = NULL;
+  guint n_failed = 0;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (manager->module));
 
+  g_variant_lookup (arg_options, "force", "b", &force);
+
   /* Bulk-importing every available pool is a higher-privilege operation
    * than importing a single named pool: it can activate pools the admin
-   * did not intend to bring online.  Use the destroy (auth_admin) tier. */
+   * did not intend to bring online.  Always require the destroy
+   * (auth_admin) tier regardless of force. */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      NULL,
                                      ZFS_POLICY_ACTION_ID_DESTROY,
@@ -615,12 +621,59 @@ handle_pool_import_all (UDisksManagerZFS      *_manager,
                                      N_("Authentication is required to import all ZFS pools"),
                                      invocation);
 
-  /* There is no single libblockdev call for "import all"; invoke zpool
-   * directly.  bd_utils_exec_and_report_error runs the command
-   * synchronously and populates @error on failure. */
-  if (!bd_utils_exec_and_report_error (argv, NULL, &error))
+  /* Enumerate importable pools via libblockdev rather than shelling out
+   * to "zpool import -a" directly.  This uses the same code path as
+   * ListImportablePools and gives us per-pool error reporting. */
+  importable = bd_zfs_pool_list_importable (&error);
+  if (importable == NULL && error != NULL)
     {
       g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
+
+  /* Import each pool individually via bd_zfs_pool_import(), honoring
+   * the force option and collecting per-pool errors. */
+  if (importable != NULL)
+    {
+      for (p = importable; *p != NULL; p++)
+        {
+          BDZFSPoolInfo *info = *p;
+          GError *pool_error = NULL;
+
+          if (info->name == NULL || info->name[0] == '\0')
+            continue;
+
+          if (!bd_zfs_pool_import (info->name,
+                                   NULL,         /* new_name */
+                                   NULL,         /* search_dirs */
+                                   force,
+                                   NULL,         /* extra args */
+                                   &pool_error))
+            {
+              if (errors_str == NULL)
+                errors_str = g_string_new (NULL);
+              else
+                g_string_append (errors_str, "; ");
+
+              g_string_append_printf (errors_str, "%s: %s",
+                                      info->name,
+                                      pool_error->message);
+              g_error_free (pool_error);
+              n_failed++;
+            }
+        }
+    }
+
+  /* If any individual imports failed, report a combined error */
+  if (n_failed > 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Failed to import %u pool(s): %s",
+                                             n_failed,
+                                             errors_str->str);
+      g_string_free (errors_str, TRUE);
       goto out;
     }
 
@@ -630,6 +683,12 @@ handle_pool_import_all (UDisksManagerZFS      *_manager,
   udisks_manager_zfs_complete_pool_import_all (_manager, invocation);
 
  out:
+  if (importable != NULL)
+    {
+      for (p = importable; *p != NULL; p++)
+        bd_zfs_pool_info_free (*p);
+      g_free (importable);
+    }
   return TRUE;
 }
 

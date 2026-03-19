@@ -93,7 +93,23 @@
         PoolImportAll:
         @options: Additional options.
 
-        Imports all available ZFS pools.
+        Imports all available ZFS pools.  Internally enumerates
+        importable pools and imports each one individually via
+        libblockdev, providing per-pool error reporting.  If any
+        individual imports fail, the error message lists each failed
+        pool and its reason.
+
+        Known options:
+          <variablelist>
+            <varlistentry>
+              <term>force (type 'b')</term>
+              <listitem><para>
+                If %TRUE, force import of each pool even if it was
+                previously in use (equivalent to zpool import -f -a).
+                Defaults to %FALSE.
+              </para></listitem>
+            </varlistentry>
+          </variablelist>
     -->
     <method name="PoolImportAll">
       <arg name="options" direction="in" type="a{sv}"/>
