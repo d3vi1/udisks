@@ -118,6 +118,14 @@ class UDisksZFSTest(udiskstestcase.UdisksTestCase):
         """Test MountDataset rejects options containing newlines or tabs"""
         self.skipTest("Mount malformed-options test requires an active ZFS pool with datasets")
 
+    def test_list_datasets_unknown_type(self):
+        """Test ListDatasets maps unrecognized backend dataset types to 'unknown'"""
+        self.skipTest("Unknown-type mapping test requires a ZFS pool with a non-standard dataset type")
+
+    def test_list_datasets_unknown_key_status(self):
+        """Test ListDatasets maps unrecognized backend key states to 'unknown'"""
+        self.skipTest("Unknown-key-status mapping test requires a ZFS pool with a non-standard key state")
+
     def test_inherit_property_rejects_pool_only(self):
         """Test InheritProperty rejects pool-only properties like autoexpand"""
         self.skipTest("InheritProperty pool-only rejection test requires an active ZFS pool")
