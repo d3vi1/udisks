@@ -1356,6 +1356,7 @@ handle_rollback_snapshot (UDisksZFSPool         *iface,
   UDisksDaemon *daemon;
   GError *error = NULL;
   gboolean force = FALSE;
+  gboolean destroy_newer = FALSE;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
@@ -1376,12 +1377,18 @@ handle_rollback_snapshot (UDisksZFSPool         *iface,
                                      invocation);
 
   /* Honor the caller's "force" option.  When force=TRUE, dependent
-   * file systems and clones that would be destroyed by the rollback
-   * are force-unmounted.  The default (force=FALSE) causes the
+   * file systems that would be affected by the rollback are
+   * force-unmounted (-f).  The default (force=FALSE) causes the
    * operation to fail if any dependent dataset is in use. */
   g_variant_lookup (arg_options, "force", "b", &force);
 
-  if (!bd_zfs_snapshot_rollback (arg_name, FALSE, force, &error))
+  /* Honor the caller's "destroy_newer" option.  When
+   * destroy_newer=TRUE, snapshots and bookmarks more recent than the
+   * target are destroyed (-r).  The default (destroy_newer=FALSE)
+   * causes the operation to fail if newer snapshots exist. */
+  g_variant_lookup (arg_options, "destroy_newer", "b", &destroy_newer);
+
+  if (!bd_zfs_snapshot_rollback (arg_name, force, destroy_newer, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
