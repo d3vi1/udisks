@@ -1092,10 +1092,13 @@ handle_list_datasets (UDisksZFSPool         *iface,
         {
           BDZFSDatasetInfo *info = *p;
           GVariantBuilder dict_builder;
-          const gchar *type_str = "filesystem";
+          const gchar *type_str;
 
           switch (info->type)
             {
+            case BD_ZFS_DATASET_TYPE_FILESYSTEM:
+              type_str = "filesystem";
+              break;
             case BD_ZFS_DATASET_TYPE_VOLUME:
               type_str = "volume";
               break;
@@ -1106,6 +1109,7 @@ handle_list_datasets (UDisksZFSPool         *iface,
               type_str = "bookmark";
               break;
             default:
+              type_str = "unknown";
               break;
             }
 
@@ -1156,11 +1160,15 @@ handle_list_datasets (UDisksZFSPool         *iface,
                                    g_variant_new_string (info->origin));
 
           {
-            const gchar *ks = "none";
-            if (info->key_status == BD_ZFS_KEY_STATUS_AVAILABLE)
+            const gchar *ks;
+            if (info->key_status == BD_ZFS_KEY_STATUS_NONE)
+              ks = "none";
+            else if (info->key_status == BD_ZFS_KEY_STATUS_AVAILABLE)
               ks = "available";
             else if (info->key_status == BD_ZFS_KEY_STATUS_UNAVAILABLE)
               ks = "unavailable";
+            else
+              ks = "unknown";
             g_variant_builder_add (&dict_builder, "{sv}", "key-status",
                                    g_variant_new_string (ks));
           }

@@ -436,6 +436,65 @@
         @datasets: An array of dictionaries with dataset properties.
 
         Lists all datasets in the pool.
+
+        Each dictionary in @datasets contains:
+          <variablelist>
+            <varlistentry>
+              <term>name (type 's')</term>
+              <listitem><para>
+                Full dataset name (e.g. <literal>pool/child</literal>).
+              </para></listitem>
+            </varlistentry>
+            <varlistentry>
+              <term>type (type 's')</term>
+              <listitem><para>
+                One of <literal>"filesystem"</literal>,
+                <literal>"volume"</literal>,
+                <literal>"snapshot"</literal>,
+                <literal>"bookmark"</literal>, or
+                <literal>"unknown"</literal>.
+              </para></listitem>
+            </varlistentry>
+            <varlistentry>
+              <term>key-status (type 's')</term>
+              <listitem><para>
+                One of <literal>"none"</literal>,
+                <literal>"available"</literal>,
+                <literal>"unavailable"</literal>, or
+                <literal>"unknown"</literal>.
+              </para></listitem>
+            </varlistentry>
+          </variablelist>
+
+        Known options:
+          <variablelist>
+            <varlistentry>
+              <term>recursive (type 'b')</term>
+              <listitem><para>
+                If %TRUE (the default), list datasets recursively.
+              </para></listitem>
+            </varlistentry>
+            <varlistentry>
+              <term>type (type 's')</term>
+              <listitem><para>
+                Filter by dataset type.  Pass <literal>"all"</literal>
+                or omit to return every type.
+              </para></listitem>
+            </varlistentry>
+            <varlistentry>
+              <term>offset (type 'x')</term>
+              <listitem><para>
+                Number of datasets to skip (default 0).
+              </para></listitem>
+            </varlistentry>
+            <varlistentry>
+              <term>limit (type 'x')</term>
+              <listitem><para>
+                Maximum number of datasets to return (-1 for unlimited,
+                the default).
+              </para></listitem>
+            </varlistentry>
+          </variablelist>
     -->
     <method name="ListDatasets">
       <arg name="options" direction="in" type="a{sv}"/>
