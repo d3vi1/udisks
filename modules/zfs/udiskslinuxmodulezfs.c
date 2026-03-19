@@ -350,6 +350,48 @@ zfs_update_pools (GObject      *source_obj,
       udisks_linux_pool_object_zfs_update (pool, *pools_p);
     }
 
+  /* Re-resolve Block.ZFS and Filesystem.ZFS Pool properties that are still
+   * set to "/" — this happens when block uevents fire before pool objects
+   * have been created. */
+  {
+    GList *objects;
+    GList *l;
+
+    objects = udisks_daemon_get_objects (daemon);
+    for (l = objects; l != NULL; l = l->next)
+      {
+        GDBusInterface *block_zfs_iface;
+        GDBusInterface *fs_zfs_iface;
+        gboolean needs_update = FALSE;
+
+        if (! UDISKS_IS_LINUX_BLOCK_OBJECT (l->data))
+          continue;
+
+        block_zfs_iface = g_dbus_object_get_interface (G_DBUS_OBJECT (l->data),
+                                                       "org.freedesktop.UDisks2.Block.ZFS");
+        if (block_zfs_iface != NULL)
+          {
+            if (g_strcmp0 (udisks_block_zfs_get_pool (UDISKS_BLOCK_ZFS (block_zfs_iface)), "/") == 0)
+              needs_update = TRUE;
+            g_object_unref (block_zfs_iface);
+          }
+
+        fs_zfs_iface = g_dbus_object_get_interface (G_DBUS_OBJECT (l->data),
+                                                     "org.freedesktop.UDisks2.Filesystem.ZFS");
+        if (fs_zfs_iface != NULL)
+          {
+            if (g_strcmp0 (udisks_filesystem_zfs_get_pool (UDISKS_FILESYSTEM_ZFS (fs_zfs_iface)), "/") == 0)
+              needs_update = TRUE;
+            g_object_unref (fs_zfs_iface);
+          }
+
+        if (needs_update)
+          udisks_linux_block_object_uevent (UDISKS_LINUX_BLOCK_OBJECT (l->data),
+                                            UDISKS_UEVENT_ACTION_OTHER, NULL);
+      }
+    g_list_free_full (objects, g_object_unref);
+  }
+
   /* Free pool info array (but contents have been consumed) */
   pool_list_free (pools);
 }
