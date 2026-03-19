@@ -12,7 +12,8 @@ class UdisksBaseTest(udiskstestcase.UdisksTestCase):
     # A map between module name (ID) and corresponding org.freedesktop.UDisks2.Manager interface
     UDISKS_MODULE_MANAGER_IFACES = {'btrfs': 'BTRFS',
                                     'iscsi': 'ISCSI.Initiator',
-                                    'lvm2': 'LVM2'}
+                                    'lvm2': 'LVM2',
+                                    'zfs': 'ZFS'}
 
     def setUp(self):
         self.manager_obj = self.get_object('/Manager')
