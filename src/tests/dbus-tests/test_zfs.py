@@ -118,6 +118,14 @@ class UDisksZFSTest(udiskstestcase.UdisksTestCase):
         """Test MountDataset rejects options containing newlines or tabs"""
         self.skipTest("Mount malformed-options test requires an active ZFS pool with datasets")
 
+    def test_inherit_property_rejects_pool_only(self):
+        """Test InheritProperty rejects pool-only properties like autoexpand"""
+        self.skipTest("InheritProperty pool-only rejection test requires an active ZFS pool")
+
+    def test_inherit_property_allows_dataset_property(self):
+        """Test InheritProperty accepts dataset-level properties like compression"""
+        self.skipTest("InheritProperty dataset-property test requires an active ZFS pool")
+
 
 if __name__ == "__main__":
     unittest.main()

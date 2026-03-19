@@ -2399,6 +2399,20 @@ handle_inherit_property (UDisksZFSPool         *iface,
       goto out;
     }
 
+  /* Reject pool-only properties — they are valid on pool objects but
+   * meaningless on datasets; give a clear error rather than letting
+   * ZFS fail with a confusing message. */
+  if (udisks_zfs_property_is_pool_only (arg_property))
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_OPTION_NOT_PERMITTED,
+                                             "Property '%s' is a pool-level property and "
+                                             "cannot be inherited on a dataset",
+                                             arg_property);
+      goto out;
+    }
+
   /* Check property against the allowlist */
   if (!udisks_zfs_property_is_allowed (arg_property, &prop_error))
     {
