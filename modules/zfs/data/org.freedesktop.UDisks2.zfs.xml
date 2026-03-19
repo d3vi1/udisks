@@ -59,7 +59,29 @@
         @options: Additional options.
         @result: Object path of the imported pool object.
 
-        Imports a ZFS pool by name or GUID.
+        Imports a ZFS pool by name or GUID.  When importing by GUID the
+        pool's original name is resolved automatically so that the correct
+        D-Bus object is returned.
+
+        Known options:
+          <variablelist>
+            <varlistentry>
+              <term>force (type 'b')</term>
+              <listitem><para>
+                If %TRUE, force import even if the pool was previously in use
+                (zpool import -f).  Requires elevated (destroy-tier) authorization.
+                Defaults to %FALSE.
+              </para></listitem>
+            </varlistentry>
+            <varlistentry>
+              <term>new_name (type 's')</term>
+              <listitem><para>
+                If set, rename the pool to this name during import.
+                Useful when importing a pool whose name conflicts with an
+                existing pool.
+              </para></listitem>
+            </varlistentry>
+          </variablelist>
     -->
     <method name="PoolImport">
       <arg name="name_or_guid" direction="in" type="s"/>

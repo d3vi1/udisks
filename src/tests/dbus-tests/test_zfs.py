@@ -70,6 +70,22 @@ class UDisksZFSTest(udiskstestcase.UdisksTestCase):
         """Test RollbackSnapshot with both force and destroy_newer options"""
         self.skipTest("Rollback test requires an active ZFS pool with snapshots")
 
+    def test_pool_import_by_name(self):
+        """Test PoolImport with a pool name"""
+        self.skipTest("Import-by-name test requires an exported ZFS pool")
+
+    def test_pool_import_by_guid(self):
+        """Test PoolImport with a bare GUID resolves the pool name correctly"""
+        self.skipTest("Import-by-GUID test requires an exported ZFS pool")
+
+    def test_pool_import_with_new_name(self):
+        """Test PoolImport with new_name option renames the pool on import"""
+        self.skipTest("Import-with-new_name test requires an exported ZFS pool")
+
+    def test_pool_import_guid_with_new_name(self):
+        """Test PoolImport by GUID with new_name option"""
+        self.skipTest("Import-by-GUID-with-new_name test requires an exported ZFS pool")
+
 
 if __name__ == "__main__":
     unittest.main()

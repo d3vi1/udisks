@@ -422,6 +422,45 @@ handle_pool_create (UDisksManagerZFS      *_manager,
 
 /* ---------------------------------------------------------------------------------------------------- */
 
+/**
+ * resolve_pool_name_by_guid:
+ * @guid: A pool GUID string.
+ *
+ * Scans the list of currently imported pools and returns the name of
+ * the pool whose GUID matches @guid.  This is needed after importing
+ * by bare GUID (without new_name) because ZFS keeps the original pool
+ * name and we need it to locate the D-Bus object.
+ *
+ * Returns: (transfer full): The pool name, or %NULL if not found.
+ *   Free with g_free().
+ */
+static gchar *
+resolve_pool_name_by_guid (const gchar *guid)
+{
+  BDZFSPoolInfo **pools = NULL;
+  BDZFSPoolInfo **p;
+  gchar *name = NULL;
+
+  pools = bd_zfs_pool_list (NULL);
+  if (pools == NULL)
+    return NULL;
+
+  for (p = pools; *p != NULL; p++)
+    {
+      if (g_strcmp0 ((*p)->guid, guid) == 0)
+        {
+          name = g_strdup ((*p)->name);
+          break;
+        }
+    }
+
+  for (p = pools; *p != NULL; p++)
+    bd_zfs_pool_info_free (*p);
+  g_free (pools);
+
+  return name;
+}
+
 static gboolean
 handle_pool_import (UDisksManagerZFS      *_manager,
                     GDBusMethodInvocation *invocation,
@@ -433,6 +472,8 @@ handle_pool_import (UDisksManagerZFS      *_manager,
   GError *error = NULL;
   gboolean force = FALSE;
   const gchar *new_name = NULL;
+  gchar *resolved_name = NULL;
+  const gchar *wait_name = NULL;
   UDisksObject *pool_object = NULL;
   WaitForPoolObjectData wait_data;
 
@@ -440,6 +481,10 @@ handle_pool_import (UDisksManagerZFS      *_manager,
 
   g_variant_lookup (arg_options, "force", "b", &force);
   g_variant_lookup (arg_options, "new_name", "&s", &new_name);
+
+  /* Treat empty new_name the same as absent */
+  if (new_name != NULL && *new_name == '\0')
+    new_name = NULL;
 
   /* Use the destroy policy for force imports, regular policy otherwise */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
@@ -458,12 +503,12 @@ handle_pool_import (UDisksManagerZFS      *_manager,
       goto out;
     }
 
-  /* Import the pool */
+  /* Import the pool, passing new_name so ZFS renames on import */
   if (!bd_zfs_pool_import (arg_name_or_guid,
-                           NULL, /* altroot */
-                           NULL, /* properties */
+                           new_name,       /* new_name (NULL keeps original) */
+                           NULL,           /* search_dirs */
                            force,
-                           NULL, /* extra args */
+                           NULL,           /* extra args */
                            &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
@@ -473,15 +518,54 @@ handle_pool_import (UDisksManagerZFS      *_manager,
   /* Trigger update so the imported pool object appears */
   udisks_linux_module_zfs_trigger_update (manager->module);
 
-  /* Wait for the pool object to show up.  The hash table is keyed by
-   * pool name, so when importing by GUID we need a name to look up.
-   * Use new_name (from options) if provided; otherwise fall back to
-   * arg_name_or_guid which works for name-based imports.
-   *
-   * TODO: bare GUID import without new_name will fail at D-Bus object
-   * resolution because the GUID does not match any pool name key. */
+  /* Determine the pool name to wait for.  The hash table is keyed by
+   * pool name, so we must resolve the expected name:
+   *   - If new_name was given, the imported pool uses that name.
+   *   - If arg_name_or_guid is a pool name, it is used directly.
+   *   - If arg_name_or_guid is a GUID (no new_name), scan the
+   *     imported pools to discover the original name. */
+  if (new_name != NULL)
+    {
+      wait_name = new_name;
+    }
+  else
+    {
+      /* Check whether the caller passed a GUID (all-digit string) */
+      gboolean is_guid = TRUE;
+      const gchar *ch;
+
+      for (ch = arg_name_or_guid; *ch != '\0'; ch++)
+        {
+          if (!g_ascii_isdigit (*ch))
+            {
+              is_guid = FALSE;
+              break;
+            }
+        }
+
+      if (is_guid)
+        {
+          resolved_name = resolve_pool_name_by_guid (arg_name_or_guid);
+          if (resolved_name == NULL)
+            {
+              g_dbus_method_invocation_return_error (invocation,
+                                                     UDISKS_ERROR,
+                                                     UDISKS_ERROR_FAILED,
+                                                     "Pool with GUID %s was imported but could not "
+                                                     "be found in the pool list",
+                                                     arg_name_or_guid);
+              goto out;
+            }
+          wait_name = resolved_name;
+        }
+      else
+        {
+          wait_name = arg_name_or_guid;
+        }
+    }
+
   wait_data.module = manager->module;
-  wait_data.name = (new_name != NULL && *new_name != '\0') ? new_name : arg_name_or_guid;
+  wait_data.name = wait_name;
   pool_object = udisks_daemon_wait_for_object_sync (daemon,
                                                      wait_for_pool_object,
                                                      &wait_data,
@@ -502,6 +586,7 @@ handle_pool_import (UDisksManagerZFS      *_manager,
                                            g_dbus_object_get_object_path (G_DBUS_OBJECT (pool_object)));
 
  out:
+  g_free (resolved_name);
   g_clear_object (&pool_object);
   return TRUE;
 }
