@@ -419,6 +419,44 @@ udisks_linux_module_zfs_trigger_update (UDisksLinuxModuleZFS *module)
   trigger_delayed_zfs_update (module);
 }
 
+/**
+ * udisks_linux_module_zfs_remove_pool:
+ * @module: A #UDisksLinuxModuleZFS.
+ * @name: The pool name to remove.
+ *
+ * Synchronously removes a pool D-Bus object from the object manager
+ * and the internal pool table.  This must only be called from the main
+ * thread (it is not thread-safe with respect to the hash table accessed
+ * by zfs_update_pools).  Export and Destroy handlers dispatch to the
+ * main thread via g_idle_add() after completing the D-Bus method.
+ *
+ * The caller should still call udisks_linux_module_zfs_trigger_update()
+ * afterwards to pick up any block-device changes asynchronously.
+ */
+void
+udisks_linux_module_zfs_remove_pool (UDisksLinuxModuleZFS *module,
+                                     const gchar          *name)
+{
+  UDisksLinuxPoolObjectZFS *pool;
+  UDisksDaemon *daemon;
+  GDBusObjectManagerServer *manager;
+
+  g_return_if_fail (UDISKS_IS_LINUX_MODULE_ZFS (module));
+  g_return_if_fail (name != NULL);
+
+  pool = g_hash_table_lookup (module->name_to_pool, name);
+  if (pool == NULL)
+    return;
+
+  daemon = udisks_module_get_daemon (UDISKS_MODULE (module));
+  manager = udisks_daemon_get_object_manager (daemon);
+
+  udisks_linux_pool_object_zfs_destroy (pool);
+  g_dbus_object_manager_server_unexport (manager,
+                                         g_dbus_object_get_object_path (G_DBUS_OBJECT (pool)));
+  g_hash_table_remove (module->name_to_pool, name);
+}
+
 static gboolean
 has_zfs_member_label (UDisksLinuxDevice *device)
 {

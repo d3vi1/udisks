@@ -289,6 +289,30 @@ handle_poll (UDisksZFSPool         *iface,
 }
 
 /* ---------------------------------------------------------------------------------------------------- */
+/*  Helper to dispatch pool removal to the main thread (thread-safety)        */
+/* ---------------------------------------------------------------------------------------------------- */
+
+typedef struct {
+  UDisksLinuxModuleZFS *module;
+  gchar *pool_name;
+} RemovePoolData;
+
+static gboolean
+remove_pool_on_main_thread (gpointer user_data)
+{
+  RemovePoolData *data = user_data;
+
+  udisks_linux_module_zfs_remove_pool (data->module, data->pool_name);
+  udisks_linux_module_zfs_trigger_update (data->module);
+
+  g_object_unref (data->module);
+  g_free (data->pool_name);
+  g_free (data);
+
+  return G_SOURCE_REMOVE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
 
 static gboolean
 handle_export (UDisksZFSPool         *iface,
@@ -317,8 +341,20 @@ handle_export (UDisksZFSPool         *iface,
       goto out;
     }
 
-  udisks_linux_module_zfs_trigger_update (object->module);
-  udisks_zfspool_complete_export (iface, invocation);
+  {
+    /* Save module ref and pool name before completing the D-Bus method,
+     * because remove_pool may drop the last reference to this object. */
+    RemovePoolData *data = g_new0 (RemovePoolData, 1);
+    data->module = g_object_ref (object->module);
+    data->pool_name = g_strdup (object->name);
+
+    /* Complete the D-Bus method first while iface is still alive */
+    udisks_zfspool_complete_export (iface, invocation);
+
+    /* Schedule pool removal + rescan on the main thread for thread safety
+     * (name_to_pool is also accessed from the main thread in zfs_update_pools) */
+    g_idle_add (remove_pool_on_main_thread, data);
+  }
 
  out:
   return TRUE;
@@ -353,8 +389,20 @@ handle_destroy (UDisksZFSPool         *iface,
       goto out;
     }
 
-  udisks_linux_module_zfs_trigger_update (object->module);
-  udisks_zfspool_complete_destroy (iface, invocation);
+  {
+    /* Save module ref and pool name before completing the D-Bus method,
+     * because remove_pool may drop the last reference to this object. */
+    RemovePoolData *data = g_new0 (RemovePoolData, 1);
+    data->module = g_object_ref (object->module);
+    data->pool_name = g_strdup (object->name);
+
+    /* Complete the D-Bus method first while iface is still alive */
+    udisks_zfspool_complete_destroy (iface, invocation);
+
+    /* Schedule pool removal + rescan on the main thread for thread safety
+     * (name_to_pool is also accessed from the main thread in zfs_update_pools) */
+    g_idle_add (remove_pool_on_main_thread, data);
+  }
 
  out:
   return TRUE;

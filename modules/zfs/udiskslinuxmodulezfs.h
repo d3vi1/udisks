@@ -49,6 +49,9 @@ GHashTable               *udisks_linux_module_zfs_get_name_to_pool  (UDisksLinux
 
 void                      udisks_linux_module_zfs_trigger_update    (UDisksLinuxModuleZFS *module);
 
+void                      udisks_linux_module_zfs_remove_pool      (UDisksLinuxModuleZFS *module,
+                                                                     const gchar          *name);
+
 G_END_DECLS
 
 #endif /* __UDISKS_LINUX_MODULE_ZFS_H__ */
