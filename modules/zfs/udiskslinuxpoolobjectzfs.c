@@ -1260,6 +1260,10 @@ handle_mount_dataset (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  const gchar *caller_mount_options = NULL;
+  const gchar *mountpoint = NULL;
+  gchar *effective_options = NULL;
+  BDExtraArg *extra[2] = {NULL, NULL};
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
@@ -1278,12 +1282,36 @@ handle_mount_dataset (UDisksZFSPool         *iface,
                                      N_("Authentication is required to mount a ZFS dataset"),
                                      invocation);
 
-  /* TODO: When the UDisks mount options framework (udiskslinuxmountoptions.c)
-   * is integrated with the ZFS module, enforce nodev,nosuid defaults here.
-   * This requires mapping ZFS mount semantics to the core options framework
-   * and is deferred to a future change. */
+  /* Extract optional caller-provided mount options and mountpoint */
+  g_variant_lookup (arg_options, "mount_options", "&s", &caller_mount_options);
+  g_variant_lookup (arg_options, "mountpoint", "&s", &mountpoint);
 
-  if (!bd_zfs_dataset_mount (arg_name, NULL, NULL, &error))
+  /* Enforce nosuid,nodev safety defaults, matching the core UDisks mount
+   * policy (see udiskslinuxmountoptions.c).  Caller-supplied options are
+   * appended after the mandatory defaults so they cannot override them. */
+  if (caller_mount_options != NULL && *caller_mount_options != '\0')
+    {
+      /* Reject mount options that contain embedded newlines or tabs;
+       * these could confuse /proc/mounts parsing. */
+      if (strpbrk (caller_mount_options, "\n\t") != NULL)
+        {
+          g_dbus_method_invocation_return_error (invocation,
+                                                 UDISKS_ERROR,
+                                                 UDISKS_ERROR_OPTION_NOT_PERMITTED,
+                                                 "Malformed mount option string");
+          goto out;
+        }
+      effective_options = g_strdup_printf ("nosuid,nodev,%s", caller_mount_options);
+    }
+  else
+    {
+      effective_options = g_strdup ("nosuid,nodev");
+    }
+
+  extra[0] = bd_extra_arg_new ("-o", effective_options);
+
+  if (!bd_zfs_dataset_mount (arg_name, mountpoint,
+                             (const BDExtraArg **) extra, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
@@ -1293,6 +1321,8 @@ handle_mount_dataset (UDisksZFSPool         *iface,
   udisks_zfspool_complete_mount_dataset (iface, invocation);
 
  out:
+  bd_extra_arg_free (extra[0]);
+  g_free (effective_options);
   return TRUE;
 }
 
