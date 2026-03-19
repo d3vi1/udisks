@@ -466,6 +466,24 @@
         @options: Additional options.
 
         Rolls back to a ZFS snapshot.
+
+        Known options:
+          <variablelist>
+            <varlistentry>
+              <term>force (type 'b')</term>
+              <listitem><para>
+                If %TRUE, force-unmount any affected file systems (zfs rollback -f).
+                Defaults to %FALSE.
+              </para></listitem>
+            </varlistentry>
+            <varlistentry>
+              <term>destroy_newer (type 'b')</term>
+              <listitem><para>
+                If %TRUE, destroy snapshots and bookmarks more recent than the
+                target (zfs rollback -r).  Defaults to %FALSE.
+              </para></listitem>
+            </varlistentry>
+          </variablelist>
     -->
     <method name="RollbackSnapshot">
       <arg name="name" direction="in" type="s"/>

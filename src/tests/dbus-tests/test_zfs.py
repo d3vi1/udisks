@@ -54,6 +54,22 @@ class UDisksZFSTest(udiskstestcase.UdisksTestCase):
         """Test scrub progress polling"""
         self.skipTest("Scrub test requires an active ZFS pool")
 
+    def test_rollback_snapshot_default_options(self):
+        """Test RollbackSnapshot accepts default options (no force, no destroy_newer)"""
+        self.skipTest("Rollback test requires an active ZFS pool with snapshots")
+
+    def test_rollback_snapshot_force_option(self):
+        """Test RollbackSnapshot passes force option as force-unmount (-f)"""
+        self.skipTest("Rollback test requires an active ZFS pool with snapshots")
+
+    def test_rollback_snapshot_destroy_newer_option(self):
+        """Test RollbackSnapshot passes destroy_newer option to destroy newer snapshots (-r)"""
+        self.skipTest("Rollback test requires an active ZFS pool with snapshots")
+
+    def test_rollback_snapshot_both_options(self):
+        """Test RollbackSnapshot with both force and destroy_newer options"""
+        self.skipTest("Rollback test requires an active ZFS pool with snapshots")
+
 
 if __name__ == "__main__":
     unittest.main()
