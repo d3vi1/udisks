@@ -3004,17 +3004,16 @@ trim_poll_callback (gpointer user_data)
   gchar *output = NULL;
   GError *error = NULL;
   gboolean trimming = FALSE;
-  gchar *cmd;
 
-  cmd = g_strdup_printf ("zpool status %s", object->name);
+  {
+    const gchar *argv[] = {"zpool", "status", object->name, NULL};
+    if (bd_utils_exec_and_capture_output (argv, NULL, &output, &error))
+      {
+        if (output != NULL && strstr (output, "trimming") != NULL)
+          trimming = TRUE;
+      }
+  }
 
-  if (bd_utils_exec_and_capture_output (cmd, NULL, &output, &error))
-    {
-      if (output != NULL && strstr (output, "trimming") != NULL)
-        trimming = TRUE;
-    }
-
-  g_free (cmd);
   g_free (output);
   g_clear_error (&error);
 
@@ -3044,17 +3043,15 @@ update_trim_properties (UDisksLinuxPoolObjectZFS *object)
   gchar *output = NULL;
   GError *error = NULL;
   gboolean trimming = FALSE;
-  gchar *cmd;
+  {
+    const gchar *argv[] = {"zpool", "status", object->name, NULL};
+    if (bd_utils_exec_and_capture_output (argv, NULL, &output, &error))
+      {
+        if (output != NULL && strstr (output, "trimming") != NULL)
+          trimming = TRUE;
+      }
+  }
 
-  cmd = g_strdup_printf ("zpool status %s", object->name);
-
-  if (bd_utils_exec_and_capture_output (cmd, NULL, &output, &error))
-    {
-      if (output != NULL && strstr (output, "trimming") != NULL)
-        trimming = TRUE;
-    }
-
-  g_free (cmd);
   g_free (output);
   g_clear_error (&error);
 
