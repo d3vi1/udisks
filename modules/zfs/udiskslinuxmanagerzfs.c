@@ -639,11 +639,18 @@ handle_pool_import_all (UDisksManagerZFS      *_manager,
         {
           BDZFSPoolInfo *info = *p;
           GError *pool_error = NULL;
+          const gchar *import_id;
 
-          if (info->name == NULL || info->name[0] == '\0')
+          /* Prefer GUID over name: GUID is unambiguous when multiple
+           * exportable pools share a name (e.g. after send/receive). */
+          if (info->guid != NULL && info->guid[0] != '\0')
+            import_id = info->guid;
+          else if (info->name != NULL && info->name[0] != '\0')
+            import_id = info->name;
+          else
             continue;
 
-          if (!bd_zfs_pool_import (info->name,
+          if (!bd_zfs_pool_import (import_id,
                                    NULL,         /* new_name */
                                    NULL,         /* search_dirs */
                                    force,
@@ -656,7 +663,7 @@ handle_pool_import_all (UDisksManagerZFS      *_manager,
                 g_string_append (errors_str, "; ");
 
               g_string_append_printf (errors_str, "%s: %s",
-                                      info->name,
+                                      info->name ? info->name : import_id,
                                       pool_error->message);
               g_error_free (pool_error);
               n_failed++;
