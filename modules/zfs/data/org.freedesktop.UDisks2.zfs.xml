@@ -551,20 +551,14 @@
         @name: The dataset name to mount.
         @options: Additional options.
 
-        Mounts a ZFS dataset.  The safety defaults
-        <literal>nosuid,nodev</literal> are always prepended to the
-        mount options, matching the core UDisks mount policy.
+        Mounts a ZFS dataset.  The hardcoded mount options
+        <literal>nosuid,nodev</literal> are always applied.
+        Caller-supplied mount options are not supported because the
+        ZFS module does not implement the full UDisks mount-option
+        allow/deny policy (see <literal>udiskslinuxmountoptions.c</literal>).
 
         Known options:
           <variablelist>
-            <varlistentry>
-              <term>mount_options (type 's')</term>
-              <listitem><para>
-                Comma-separated mount options to append after the
-                mandatory <literal>nosuid,nodev</literal> defaults.
-                Options containing newlines or tabs are rejected.
-              </para></listitem>
-            </varlistentry>
             <varlistentry>
               <term>mountpoint (type 's')</term>
               <listitem><para>
