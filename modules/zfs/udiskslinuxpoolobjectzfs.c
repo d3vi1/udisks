@@ -1206,6 +1206,7 @@ handle_destroy_dataset (UDisksZFSPool         *iface,
   GError *error = NULL;
   GError *local_error = NULL;
   gboolean force = FALSE;
+  BDZFSDatasetInfo *ds_info = NULL;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
@@ -1230,19 +1231,34 @@ handle_destroy_dataset (UDisksZFSPool         *iface,
    * we force-unmount and pass force to destroy as well. */
   g_variant_lookup (arg_options, "force", "b", &force);
 
-  if (!bd_zfs_dataset_unmount (arg_name, force, &local_error))
+  /* Resolve the dataset type so we only attempt unmount on types that
+   * are actually mountable (filesystems and volumes).  Snapshots and
+   * bookmarks are never mounted, so unmounting them is both pointless
+   * and likely to produce a confusing error. */
+  ds_info = bd_zfs_dataset_get_info (arg_name, &local_error);
+  if (ds_info == NULL)
     {
-      if (!force)
+      g_dbus_method_invocation_take_error (invocation, local_error);
+      goto out;
+    }
+
+  if (ds_info->type == BD_ZFS_DATASET_TYPE_FILESYSTEM ||
+      ds_info->type == BD_ZFS_DATASET_TYPE_VOLUME)
+    {
+      if (!bd_zfs_dataset_unmount (arg_name, force, &local_error))
         {
-          /* Non-force unmount failed — report to caller instead of
-           * silently retrying with force */
-          g_dbus_method_invocation_return_gerror (invocation, local_error);
-          g_error_free (local_error);
-          goto out;
+          if (!force)
+            {
+              /* Non-force unmount failed — report to caller instead of
+               * silently retrying with force */
+              g_dbus_method_invocation_return_gerror (invocation, local_error);
+              g_error_free (local_error);
+              goto out;
+            }
+          /* force=TRUE: unmount may still fail (e.g. already unmounted),
+           * which is harmless — clear and proceed to destroy */
+          g_clear_error (&local_error);
         }
-      /* force=TRUE: unmount may still fail (e.g. already unmounted),
-       * which is harmless — clear and proceed to destroy */
-      g_clear_error (&local_error);
     }
 
   if (!bd_zfs_dataset_destroy (arg_name, arg_recursive, force, &error))
@@ -1255,6 +1271,8 @@ handle_destroy_dataset (UDisksZFSPool         *iface,
   udisks_zfspool_complete_destroy_dataset (iface, invocation);
 
  out:
+  if (ds_info != NULL)
+    bd_zfs_dataset_info_free (ds_info);
   return TRUE;
 }
 
