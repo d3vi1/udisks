@@ -517,24 +517,22 @@ class UDisksZFSTest(udiskstestcase.UdisksTestCase):
         self.assertTrue(os.path.ismount(tmp),
                         'Expected %s to be a mountpoint' % tmp)
 
-    @unittest.skipUnless(ZFS_AVAILABLE, 'ZFS kernel module or tools not available')
-    def test_mount_dataset_rejects_malformed_options(self):
-        """Test MountDataset rejects options containing newlines or tabs"""
-        self.skipTest("Mount malformed-options test requires an active ZFS pool with datasets")
+    # NOTE: test_mount_dataset_rejects_malformed_options was removed because
+    # MountDataset no longer accepts caller-supplied mount_options; the handler
+    # hardcodes nosuid,nodev and ignores anything else, so there is nothing
+    # to reject.
 
     # ------------------------------------------------------------------ #
     #  ListDatasets edge cases                                            #
     # ------------------------------------------------------------------ #
 
-    @unittest.skipUnless(ZFS_AVAILABLE, 'ZFS kernel module or tools not available')
-    def test_list_datasets_unknown_type(self):
-        """Test ListDatasets maps unrecognized backend dataset types to 'unknown'"""
-        self.skipTest("Unknown-type mapping test requires a ZFS pool with a non-standard dataset type")
-
-    @unittest.skipUnless(ZFS_AVAILABLE, 'ZFS kernel module or tools not available')
-    def test_list_datasets_unknown_key_status(self):
-        """Test ListDatasets maps unrecognized backend key states to 'unknown'"""
-        self.skipTest("Unknown-key-status mapping test requires a ZFS pool with a non-standard key state")
+    # NOTE: test_list_datasets_unknown_type and
+    # test_list_datasets_unknown_key_status are not testable with real ZFS
+    # because ZFS does not allow creating datasets with non-standard types
+    # or key states.  The "unknown" fallback paths in the D-Bus handler
+    # exist purely as defensive coding and can only be reached if a future
+    # OpenZFS version introduces a new dataset type or key state that
+    # libblockdev does not yet enumerate.
 
     # ------------------------------------------------------------------ #
     #  InheritProperty boundaries                                         #
