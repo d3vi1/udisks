@@ -60,6 +60,9 @@ struct _UDisksLinuxPoolObjectZFS
 
   /* scrub polling */
   guint scrub_poll_id;
+
+  /* trim polling */
+  guint trim_poll_id;
 };
 
 struct _UDisksLinuxPoolObjectZFSClass
@@ -85,6 +88,12 @@ udisks_linux_pool_object_zfs_finalize (GObject *_object)
     {
       g_source_remove (object->scrub_poll_id);
       object->scrub_poll_id = 0;
+    }
+
+  if (object->trim_poll_id != 0)
+    {
+      g_source_remove (object->trim_poll_id);
+      object->trim_poll_id = 0;
     }
 
   g_object_unref (object->module);
@@ -253,6 +262,9 @@ pool_resolve_blocks_to_device_paths (UDisksDaemon          *daemon,
   g_ptr_array_add (devices, NULL);
   return (gchar **) g_ptr_array_free (devices, FALSE);
 }
+
+/* Forward declaration — implementation follows after scrub polling */
+static gboolean trim_poll_callback (gpointer user_data);
 
 /* ---------------------------------------------------------------------------------------------------- */
 /*  ZFSPool D-Bus method handlers                                                                       */
@@ -809,6 +821,13 @@ handle_trim_start (UDisksZFSPool         *iface,
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
+    }
+
+  /* Mark TrimRunning immediately and start the poll timer */
+  udisks_zfspool_set_trim_running (iface, TRUE);
+  if (object->trim_poll_id == 0)
+    {
+      object->trim_poll_id = g_timeout_add_seconds (5, trim_poll_callback, object);
     }
 
   udisks_linux_module_zfs_trigger_update (object->module);
@@ -2123,6 +2142,14 @@ handle_trim_stop (UDisksZFSPool         *iface,
       goto out;
     }
 
+  /* Stop the poll timer and mark trim as no longer running */
+  udisks_zfspool_set_trim_running (iface, FALSE);
+  if (object->trim_poll_id != 0)
+    {
+      g_source_remove (object->trim_poll_id);
+      object->trim_poll_id = 0;
+    }
+
   udisks_linux_module_zfs_trigger_update (object->module);
   udisks_zfspool_complete_trim_stop (iface, invocation);
 
@@ -2958,6 +2985,93 @@ update_scrub_properties (UDisksLinuxPoolObjectZFS *object)
 }
 
 /* ---------------------------------------------------------------------------------------------------- */
+/*  Trim status polling                                                                                 */
+/* ---------------------------------------------------------------------------------------------------- */
+
+/**
+ * trim_poll_callback:
+ *
+ * GSource callback fired every 5 seconds while a trim is active.
+ * Runs `zpool status <pool>` and checks whether any vdev line
+ * contains "trimming".  Removes itself when the trim is no longer
+ * active.
+ */
+static gboolean
+trim_poll_callback (gpointer user_data)
+{
+  UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
+  UDisksZFSPool *iface = object->iface_zfs_pool;
+  gchar *output = NULL;
+  GError *error = NULL;
+  gboolean trimming = FALSE;
+  gchar *cmd;
+
+  cmd = g_strdup_printf ("zpool status %s", object->name);
+
+  if (bd_utils_exec_and_capture_output (cmd, NULL, &output, &error))
+    {
+      if (output != NULL && strstr (output, "trimming") != NULL)
+        trimming = TRUE;
+    }
+
+  g_free (cmd);
+  g_free (output);
+  g_clear_error (&error);
+
+  udisks_zfspool_set_trim_running (iface, trimming);
+
+  if (trimming)
+    return G_SOURCE_CONTINUE;
+
+  /* Trim is no longer active; remove the timer */
+  object->trim_poll_id = 0;
+  return G_SOURCE_REMOVE;
+}
+
+/**
+ * update_trim_properties:
+ * @object: A #UDisksLinuxPoolObjectZFS.
+ *
+ * Queries the current trim status for the pool by running
+ * `zpool status` and checking for "trimming" in the output.
+ * Manages the poll timer: starts a 5-second periodic timer when
+ * a trim is active, and removes it once the trim finishes.
+ */
+static void
+update_trim_properties (UDisksLinuxPoolObjectZFS *object)
+{
+  UDisksZFSPool *iface = object->iface_zfs_pool;
+  gchar *output = NULL;
+  GError *error = NULL;
+  gboolean trimming = FALSE;
+  gchar *cmd;
+
+  cmd = g_strdup_printf ("zpool status %s", object->name);
+
+  if (bd_utils_exec_and_capture_output (cmd, NULL, &output, &error))
+    {
+      if (output != NULL && strstr (output, "trimming") != NULL)
+        trimming = TRUE;
+    }
+
+  g_free (cmd);
+  g_free (output);
+  g_clear_error (&error);
+
+  udisks_zfspool_set_trim_running (iface, trimming);
+
+  if (trimming && object->trim_poll_id == 0)
+    {
+      object->trim_poll_id = g_timeout_add_seconds (5, trim_poll_callback, object);
+    }
+  else if (!trimming && object->trim_poll_id != 0)
+    {
+      g_source_remove (object->trim_poll_id);
+      object->trim_poll_id = 0;
+    }
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
 
 /**
  * udisks_linux_pool_object_zfs_update:
@@ -2991,6 +3105,9 @@ udisks_linux_pool_object_zfs_update (UDisksLinuxPoolObjectZFS *object,
 
   /* Query and update scrub status (also starts/stops the poll timer) */
   update_scrub_properties (object);
+
+  /* Query and update trim status (also starts/stops the poll timer) */
+  update_trim_properties (object);
 
   /* Populate feature flags from pool properties */
   {
@@ -3059,6 +3176,13 @@ udisks_linux_pool_object_zfs_destroy (UDisksLinuxPoolObjectZFS *object)
     {
       g_source_remove (object->scrub_poll_id);
       object->scrub_poll_id = 0;
+    }
+
+  /* Stop the trim poll timer to prevent use-after-free */
+  if (object->trim_poll_id != 0)
+    {
+      g_source_remove (object->trim_poll_id);
+      object->trim_poll_id = 0;
     }
 
   if (object->iface_zfs_pool != NULL)

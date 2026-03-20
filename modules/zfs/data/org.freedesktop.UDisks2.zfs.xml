@@ -190,6 +190,15 @@
     <property name="ScrubErrors" type="t" access="read"/>
 
     <!--
+        TrimRunning:
+
+        %TRUE when a TRIM operation is currently in progress on this pool.
+        Updated by polling <literal>zpool status</literal> output for
+        "trimming" indicators on vdev lines while a trim is active.
+    -->
+    <property name="TrimRunning" type="b" access="read"/>
+
+    <!--
         Poll:
 
         Re-reads pool status from the kernel.
@@ -538,7 +547,21 @@
         @recursive: If %TRUE, destroy all children recursively.
         @options: Additional options.
 
-        Destroys a ZFS dataset.
+        Destroys a ZFS dataset.  Filesystems and volumes are unmounted
+        before destruction.  If unmount fails and @force is not set, the
+        operation is aborted.
+
+        Known options:
+          <variablelist>
+            <varlistentry>
+              <term>force (type 'b')</term>
+              <listitem><para>
+                If %TRUE, force-unmount the dataset before destroying it
+                and pass the force flag to the destroy command as well.
+                Defaults to %FALSE.
+              </para></listitem>
+            </varlistentry>
+          </variablelist>
     -->
     <method name="DestroyDataset">
       <arg name="name" direction="in" type="s"/>
