@@ -1563,18 +1563,35 @@ handle_rename_dataset (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  gchar *full_new_name = NULL;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
-  /* Cross-pool validation — both source and destination must belong to this pool */
+  /* Cross-pool validation — source must belong to this pool */
   if (!udisks_zfs_validate_name_in_pool (object->name, arg_name, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       return TRUE;
     }
-  if (!udisks_zfs_validate_name_in_pool (object->name, arg_new_name, &error))
+
+  /* Rename destination name handling:
+   *
+   * If the new name is a bare name (no '/'), we prepend the pool name
+   * so that "newname" becomes "poolname/newname".  This is a convenience
+   * for callers who want the dataset at the pool root.
+   *
+   * If the new name contains a '/', it is used as-is but must still
+   * pass the cross-pool validation below. */
+  if (strchr (arg_new_name, '/') == NULL)
+    full_new_name = g_strdup_printf ("%s/%s", object->name, arg_new_name);
+  else
+    full_new_name = g_strdup (arg_new_name);
+
+  /* Validate the full new name against the pool */
+  if (!udisks_zfs_validate_name_in_pool (object->name, full_new_name, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
+      g_free (full_new_name);
       return TRUE;
     }
 
@@ -1586,7 +1603,7 @@ handle_rename_dataset (UDisksZFSPool         *iface,
                                      N_("Authentication is required to rename a ZFS dataset"),
                                      invocation);
 
-  if (!bd_zfs_dataset_rename (arg_name, arg_new_name, FALSE, FALSE, &error))
+  if (!bd_zfs_dataset_rename (arg_name, full_new_name, FALSE, FALSE, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
@@ -1596,6 +1613,7 @@ handle_rename_dataset (UDisksZFSPool         *iface,
   udisks_zfspool_complete_rename_dataset (iface, invocation);
 
  out:
+  g_free (full_new_name);
   return TRUE;
 }
 
@@ -2518,6 +2536,7 @@ handle_create_bookmark (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  gchar *full_bookmark = NULL;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
@@ -2528,10 +2547,25 @@ handle_create_bookmark (UDisksZFSPool         *iface,
       return TRUE;
     }
 
-  /* Cross-pool validation on the bookmark name */
-  if (!udisks_zfs_validate_name_in_pool (object->name, arg_bookmark, &error))
+  /* Bookmark name handling:
+   *
+   * If the bookmark name is a bare name (no '/'), we prepend the pool
+   * name so that "mybookmark" becomes "poolname/mybookmark".  This is
+   * a convenience for callers — matching the same normalization used
+   * by CloneSnapshot for clone names.
+   *
+   * If the bookmark name contains a '/', it is used as-is but must
+   * still pass the cross-pool validation below. */
+  if (strchr (arg_bookmark, '/') == NULL)
+    full_bookmark = g_strdup_printf ("%s/%s", object->name, arg_bookmark);
+  else
+    full_bookmark = g_strdup (arg_bookmark);
+
+  /* Validate the full bookmark name against the pool */
+  if (!udisks_zfs_validate_name_in_pool (object->name, full_bookmark, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
+      g_free (full_bookmark);
       return TRUE;
     }
 
@@ -2542,7 +2576,7 @@ handle_create_bookmark (UDisksZFSPool         *iface,
                                      N_("Authentication is required to create a ZFS bookmark"),
                                      invocation);
 
-  if (!bd_zfs_bookmark_create (arg_snapshot, arg_bookmark, &error))
+  if (!bd_zfs_bookmark_create (arg_snapshot, full_bookmark, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
@@ -2552,6 +2586,7 @@ handle_create_bookmark (UDisksZFSPool         *iface,
   udisks_zfspool_complete_create_bookmark (iface, invocation);
 
  out:
+  g_free (full_bookmark);
   return TRUE;
 }
 
