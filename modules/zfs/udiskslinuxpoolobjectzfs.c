@@ -2962,10 +2962,52 @@ udisks_linux_pool_object_zfs_update (UDisksLinuxPoolObjectZFS *object,
   /* Query and update scrub status (also starts/stops the poll timer) */
   update_scrub_properties (object);
 
-  /* Feature flags require a separate query; set safe defaults here. */
+  /* Populate feature flags from pool properties */
   {
-    const gchar *const empty_strv[] = { NULL };
-    udisks_zfspool_set_feature_flags (iface, empty_strv);
+    BDZFSPropertyInfo **all_props;
+    GPtrArray *flags;
+    gboolean has_device_trim = FALSE;
+    gboolean maintenance_avail;
+
+    flags = g_ptr_array_new ();
+
+    all_props = bd_zfs_pool_get_properties (object->name, NULL);
+    if (all_props != NULL)
+      {
+        for (guint i = 0; all_props[i] != NULL; i++)
+          {
+            BDZFSPropertyInfo *p = all_props[i];
+
+            if (g_str_has_prefix (p->name, "feature@") &&
+                (g_strcmp0 (p->value, "active") == 0 ||
+                 g_strcmp0 (p->value, "enabled") == 0))
+              {
+                g_ptr_array_add (flags, (gpointer) g_strdup (p->name));
+
+                if (g_strcmp0 (p->name, "feature@device_trim") == 0)
+                  has_device_trim = TRUE;
+              }
+
+            bd_zfs_property_info_free (p);
+          }
+        g_free (all_props);
+      }
+
+    g_ptr_array_add (flags, NULL);
+    udisks_zfspool_set_feature_flags (iface, (const gchar *const *) flags->pdata);
+
+    /* Free the duplicated strings */
+    for (guint i = 0; i < flags->len - 1; i++)
+      g_free (g_ptr_array_index (flags, i));
+    g_ptr_array_free (flags, TRUE);
+
+    /* CanTrim requires both runtime support and the pool feature */
+    maintenance_avail = bd_zfs_is_tech_avail (BD_ZFS_TECH_MAINTENANCE,
+                                              BD_ZFS_TECH_MODE_MODIFY, NULL);
+    udisks_zfspool_set_can_trim (iface, maintenance_avail && has_device_trim);
+
+    /* CanScrubPause only requires runtime support (same version gate) */
+    udisks_zfspool_set_can_scrub_pause (iface, maintenance_avail);
   }
 
   g_dbus_interface_skeleton_flush (G_DBUS_INTERFACE_SKELETON (iface));

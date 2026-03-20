@@ -152,7 +152,38 @@
     <property name="ReadOnly" type="b" access="read"/>
     <property name="Altroot" type="s" access="read"/>
     <property name="Health" type="s" access="read"/>
+    <!--
+        FeatureFlags:
+
+        An array of pool feature flags that are active or enabled on this
+        pool.  Each entry is the full feature name as reported by
+        <literal>zpool get all</literal> (e.g.
+        <literal>"feature@device_trim"</literal>,
+        <literal>"feature@encryption"</literal>).
+
+        Only features whose value is <literal>"active"</literal> or
+        <literal>"enabled"</literal> are included; disabled features are
+        omitted.
+    -->
     <property name="FeatureFlags" type="as" access="read"/>
+
+    <!--
+        CanTrim:
+
+        %TRUE when the installed OpenZFS version supports
+        <literal>zpool trim</literal> (0.8.0+) and the pool has the
+        <literal>feature@device_trim</literal> feature active or enabled.
+    -->
+    <property name="CanTrim" type="b" access="read"/>
+
+    <!--
+        CanScrubPause:
+
+        %TRUE when the installed OpenZFS version supports
+        <literal>zpool scrub -p</literal> (0.8.0+).
+    -->
+    <property name="CanScrubPause" type="b" access="read"/>
+
     <property name="ScrubRunning" type="b" access="read"/>
     <property name="ScrubPaused" type="b" access="read"/>
     <property name="ScrubProgress" type="d" access="read"/>
