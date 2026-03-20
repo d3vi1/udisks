@@ -149,6 +149,14 @@ else
 	$(AM_V_at) $(SED) "/<\!-- BTRFS_GENERATED_SECTIONS -->/d" $(builddir)/$(UDISKS_SECTIONS) > $(builddir)/$(UDISKS_SECTIONS).tmp && mv -f $(builddir)/$(UDISKS_SECTIONS).tmp $(builddir)/$(UDISKS_SECTIONS)
 	$(AM_V_at) $(SED) "/\# BTRFS_TYPES/d" $(builddir)/$(UDISKS_TYPES) > $(builddir)/$(UDISKS_TYPES).tmp && mv -f $(builddir)/$(UDISKS_TYPES).tmp $(builddir)/$(UDISKS_TYPES)
 endif # HAVE_BTRFS
+if HAVE_ZFS
+	$(AM_V_at) $(SED) -f $(DOC_DIR)/$(DOC_MAIN_SGML_FILE).zfs.sed $(builddir)/$(DOC_MAIN_SGML_FILE) > $(builddir)/$(DOC_MAIN_SGML_FILE).tmp && mv -f $(builddir)/$(DOC_MAIN_SGML_FILE).tmp $(builddir)/$(DOC_MAIN_SGML_FILE)
+	$(AM_V_at) $(SED) -f $(DOC_DIR)/$(UDISKS_SECTIONS).zfs.sed $(builddir)/$(UDISKS_SECTIONS) > $(builddir)/$(UDISKS_SECTIONS).tmp && mv -f $(builddir)/$(UDISKS_SECTIONS).tmp $(builddir)/$(UDISKS_SECTIONS)
+	$(AM_V_at) $(SED) -f $(DOC_DIR)/$(UDISKS_TYPES).zfs.sed $(builddir)/$(UDISKS_TYPES) > $(builddir)/$(UDISKS_TYPES).tmp && mv -f $(builddir)/$(UDISKS_TYPES).tmp $(builddir)/$(UDISKS_TYPES)
+else
+	$(AM_V_at) $(SED) "/<\!-- ZFS_GENERATED_SECTIONS -->/d" $(builddir)/$(UDISKS_SECTIONS) > $(builddir)/$(UDISKS_SECTIONS).tmp && mv -f $(builddir)/$(UDISKS_SECTIONS).tmp $(builddir)/$(UDISKS_SECTIONS)
+	$(AM_V_at) $(SED) "/\# ZFS_TYPES/d" $(builddir)/$(UDISKS_TYPES) > $(builddir)/$(UDISKS_TYPES).tmp && mv -f $(builddir)/$(UDISKS_TYPES).tmp $(builddir)/$(UDISKS_TYPES)
+endif # HAVE_ZFS
 
 
 if ENABLE_DAEMON
@@ -179,6 +187,15 @@ CFILE_GLOB += $(top_srcdir)/modules/btrfs/*.c
 AM_CPPFLAGS += -I$(top_srcdir)/modules/btrfs
 GTKDOC_LIBS += $(top_builddir)/modules/btrfs/libudisks2_btrfs.la
 endif # HAVE_BTRFS
+
+# GTKDOC for ZFS
+if HAVE_ZFS
+DOC_SOURCE_DIR += $(top_srcdir)/modules/zfs
+HFILE_GLOB += $(top_srcdir)/modules/zfs/*.h
+CFILE_GLOB += $(top_srcdir)/modules/zfs/*.c
+AM_CPPFLAGS += -I$(top_srcdir)/modules/zfs
+GTKDOC_LIBS += $(top_builddir)/modules/zfs/libudisks2_zfs.la
+endif # HAVE_ZFS
 
 # GTKDOC for LSM
 if HAVE_LSM
@@ -238,6 +255,13 @@ EXTRA_DIST +=                                                                  \
 	$(UDISKS_SECTIONS).lvm2.sections.in                                    \
 	$(UDISKS_SECTIONS).lvm2.sed                                            \
 	$(UDISKS_SECTIONS).lsm.sections.in                                     \
+	$(DOC_MAIN_SGML_FILE).zfs.dbus.in                                      \
+	$(DOC_MAIN_SGML_FILE).zfs.generated.in                                 \
+	$(DOC_MAIN_SGML_FILE).zfs.sed                                          \
+	$(UDISKS_TYPES).zfs.in                                                 \
+	$(UDISKS_TYPES).zfs.sed                                                \
+	$(UDISKS_SECTIONS).zfs.sections.in                                     \
+	$(UDISKS_SECTIONS).zfs.sed                                             \
 	configurable_mount_options.xml                                         \
 	version.xml.in                                                         \
 	TODO-ISCSI

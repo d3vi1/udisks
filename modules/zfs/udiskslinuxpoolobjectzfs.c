@@ -185,84 +185,6 @@ pool_state_to_string (BDZFSPoolState state)
     }
 }
 
-/* ---------------------------------------------------------------------------------------------------- */
-/*  Helpers for ZFSPool method handlers                                                                */
-/* ---------------------------------------------------------------------------------------------------- */
-
-/**
- * resolve_blocks_to_device_paths:
- * @daemon: A #UDisksDaemon.
- * @arg_blocks: NULL-terminated array of D-Bus object paths.
- * @invocation: The method invocation (for error reporting).
- *
- * Resolves an array of D-Bus object paths to device path strings.
- *
- * Returns: (transfer full): A NULL-terminated array of device path strings,
- *   or %NULL on error (in which case an error has been returned on @invocation).
- *   Free with g_strfreev().
- */
-static gchar **
-pool_resolve_blocks_to_device_paths (UDisksDaemon          *daemon,
-                                     const gchar *const    *arg_blocks,
-                                     GDBusMethodInvocation *invocation)
-{
-  guint n;
-  guint count;
-  GPtrArray *devices;
-
-  for (count = 0; arg_blocks != NULL && arg_blocks[count] != NULL; count++)
-    ;
-
-  if (count == 0)
-    {
-      g_dbus_method_invocation_return_error (invocation,
-                                             UDISKS_ERROR,
-                                             UDISKS_ERROR_FAILED,
-                                             "List of block devices is empty");
-      return NULL;
-    }
-
-  devices = g_ptr_array_new_with_free_func (g_free);
-
-  for (n = 0; n < count; n++)
-    {
-      UDisksObject *obj = NULL;
-      UDisksBlock *block = NULL;
-
-      obj = udisks_daemon_find_object (daemon, arg_blocks[n]);
-      if (obj == NULL)
-        {
-          g_dbus_method_invocation_return_error (invocation,
-                                                 UDISKS_ERROR,
-                                                 UDISKS_ERROR_FAILED,
-                                                 "Invalid object path %s at index %u",
-                                                 arg_blocks[n], n);
-          g_ptr_array_unref (devices);
-          return NULL;
-        }
-
-      block = udisks_object_get_block (obj);
-      if (block == NULL)
-        {
-          g_dbus_method_invocation_return_error (invocation,
-                                                 UDISKS_ERROR,
-                                                 UDISKS_ERROR_FAILED,
-                                                 "Object path %s at index %u is not a block device",
-                                                 arg_blocks[n], n);
-          g_object_unref (obj);
-          g_ptr_array_unref (devices);
-          return NULL;
-        }
-
-      g_ptr_array_add (devices, udisks_block_dup_device (block));
-      g_object_unref (block);
-      g_object_unref (obj);
-    }
-
-  g_ptr_array_add (devices, NULL);
-  return (gchar **) g_ptr_array_free (devices, FALSE);
-}
-
 /* Forward declaration — implementation follows after scrub polling */
 static gboolean trim_poll_callback (gpointer user_data);
 
@@ -339,10 +261,11 @@ handle_export (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
-  /* Policy check */
+  /* Policy check — force-exporting a pool that is in use is a
+   * destructive action, so escalate to destroy-tier authorization. */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
-                                     ZFS_POLICY_ACTION_ID,
+                                     arg_force ? ZFS_POLICY_ACTION_ID_DESTROY : ZFS_POLICY_ACTION_ID,
                                      arg_options,
                                      N_("Authentication is required to export a ZFS pool"),
                                      invocation);
@@ -446,7 +369,7 @@ handle_add_vdev (UDisksZFSPool         *iface,
                                      invocation);
 
   /* Resolve block object paths to device paths */
-  device_paths = pool_resolve_blocks_to_device_paths (daemon, arg_blocks, invocation);
+  device_paths = udisks_zfs_resolve_blocks_to_device_paths (daemon, arg_blocks, invocation, NULL);
   if (device_paths == NULL)
     goto out;
 
@@ -523,6 +446,7 @@ handle_replace_vdev (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  gchar *new_device_path = NULL;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
@@ -534,7 +458,12 @@ handle_replace_vdev (UDisksZFSPool         *iface,
                                      N_("Authentication is required to replace a ZFS device"),
                                      invocation);
 
-  if (!bd_zfs_pool_replace (object->name, arg_old_device, arg_new_device, arg_force, &error))
+  /* Resolve the new_device object path to a device path */
+  new_device_path = udisks_zfs_resolve_block_to_device_path (daemon, arg_new_device, invocation);
+  if (new_device_path == NULL)
+    goto out;
+
+  if (!bd_zfs_pool_replace (object->name, arg_old_device, new_device_path, arg_force, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
@@ -544,6 +473,7 @@ handle_replace_vdev (UDisksZFSPool         *iface,
   udisks_zfspool_complete_replace_vdev (iface, invocation);
 
  out:
+  g_free (new_device_path);
   return TRUE;
 }
 
@@ -560,6 +490,7 @@ handle_attach_vdev (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  gchar *new_device_path = NULL;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
@@ -571,7 +502,12 @@ handle_attach_vdev (UDisksZFSPool         *iface,
                                      N_("Authentication is required to attach a ZFS device"),
                                      invocation);
 
-  if (!bd_zfs_pool_attach (object->name, arg_existing_device, arg_new_device, &error))
+  /* Resolve the new_device object path to a device path */
+  new_device_path = udisks_zfs_resolve_block_to_device_path (daemon, arg_new_device, invocation);
+  if (new_device_path == NULL)
+    goto out;
+
+  if (!bd_zfs_pool_attach (object->name, arg_existing_device, new_device_path, &error))
     {
       g_dbus_method_invocation_take_error (invocation, error);
       goto out;
@@ -581,6 +517,7 @@ handle_attach_vdev (UDisksZFSPool         *iface,
   udisks_zfspool_complete_attach_vdev (iface, invocation);
 
  out:
+  g_free (new_device_path);
   return TRUE;
 }
 
@@ -913,9 +850,11 @@ handle_get_property (UDisksZFSPool         *iface,
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
 
+  /* Query-sensitive properties (encryption metadata) require manage-zfs
+   * authorization instead of the default query tier. */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
-                                     ZFS_POLICY_ACTION_ID_QUERY,
+                                     udisks_zfs_property_is_query_sensitive (arg_name) ? ZFS_POLICY_ACTION_ID : ZFS_POLICY_ACTION_ID_QUERY,
                                      arg_options,
                                      N_("Authentication is required to query a ZFS pool property"),
                                      invocation);
@@ -1317,16 +1256,19 @@ handle_mount_dataset (UDisksZFSPool         *iface,
       return TRUE;
     }
 
-  /* Policy check */
+  /* Extract optional mountpoint override before the policy check so
+   * we can escalate authorization when a custom mountpoint is given. */
+  g_variant_lookup (arg_options, "mountpoint", "&s", &mountpoint);
+
+  /* Policy check — mounting to a custom mountpoint can redirect writes
+   * to an arbitrary directory, so require the stronger destroy-tier
+   * authorization when a mountpoint override is provided. */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
-                                     ZFS_POLICY_ACTION_ID,
+                                     mountpoint != NULL ? ZFS_POLICY_ACTION_ID_DESTROY : ZFS_POLICY_ACTION_ID,
                                      arg_options,
                                      N_("Authentication is required to mount a ZFS dataset"),
                                      invocation);
-
-  /* Extract optional mountpoint override */
-  g_variant_lookup (arg_options, "mountpoint", "&s", &mountpoint);
 
   /* Hardcoded safety defaults -- caller-supplied mount options are not
    * supported because the ZFS module does not implement the full UDisks
@@ -1739,10 +1681,11 @@ handle_get_dataset_property (UDisksZFSPool         *iface,
       return TRUE;
     }
 
-  /* Policy check */
+  /* Query-sensitive properties (encryption metadata) require manage-zfs
+   * authorization instead of the default query tier. */
   UDISKS_DAEMON_CHECK_AUTHORIZATION (daemon,
                                      UDISKS_OBJECT (object),
-                                     ZFS_POLICY_ACTION_ID_QUERY,
+                                     udisks_zfs_property_is_query_sensitive (arg_property) ? ZFS_POLICY_ACTION_ID : ZFS_POLICY_ACTION_ID_QUERY,
                                      arg_options,
                                      N_("Authentication is required to query a ZFS dataset property"),
                                      invocation);
@@ -1905,6 +1848,7 @@ handle_change_key (UDisksZFSPool         *iface,
   UDisksLinuxPoolObjectZFS *object = UDISKS_LINUX_POOL_OBJECT_ZFS (user_data);
   UDisksDaemon *daemon;
   GError *error = NULL;
+  GVariant *passphrase_v = NULL;
   const gchar *new_key_location = NULL;
 
   daemon = udisks_module_get_daemon (UDISKS_MODULE (object->module));
@@ -1924,27 +1868,53 @@ handle_change_key (UDisksZFSPool         *iface,
                                      N_("Authentication is required to change a ZFS encryption key"),
                                      invocation);
 
-  g_variant_lookup (arg_options, "new_key_location", "&s", &new_key_location);
-
-  /* Validate new_key_location if provided */
-  if (new_key_location != NULL &&
-      g_strcmp0 (new_key_location, "prompt") != 0 &&
-      !g_str_has_prefix (new_key_location, "file://") &&
-      !g_str_has_prefix (new_key_location, "pkcs11:"))
+  /* Check for a passphrase first (takes priority over new_key_location) */
+  passphrase_v = g_variant_lookup_value (arg_options, "passphrase", G_VARIANT_TYPE_BYTESTRING);
+  if (passphrase_v)
     {
-      g_dbus_method_invocation_return_error (invocation,
-                                             UDISKS_ERROR,
-                                             UDISKS_ERROR_FAILED,
-                                             "Invalid new_key_location '%s': must be 'prompt', "
-                                             "'file://...' or 'pkcs11:...'",
-                                             new_key_location);
-      goto out;
+      gsize len = 0;
+      const guchar *passphrase_data = g_variant_get_fixed_array (passphrase_v, &len, sizeof (guchar));
+      gchar *passphrase = g_strndup ((const gchar *) passphrase_data, len);
+
+      /* libblockdev treats non-URI strings as passphrases and pipes
+       * them via stdin with -o keylocation=prompt */
+      if (!bd_zfs_encryption_change_key (arg_dataset, passphrase, NULL, &error))
+        {
+          explicit_bzero (passphrase, len);
+          g_free (passphrase);
+          g_variant_unref (passphrase_v);
+          g_dbus_method_invocation_take_error (invocation, error);
+          goto out;
+        }
+
+      /* SECURITY: zero out passphrase memory before freeing */
+      explicit_bzero (passphrase, len);
+      g_free (passphrase);
+      g_variant_unref (passphrase_v);
     }
-
-  if (!bd_zfs_encryption_change_key (arg_dataset, new_key_location, NULL, &error))
+  else
     {
-      g_dbus_method_invocation_take_error (invocation, error);
-      goto out;
+      g_variant_lookup (arg_options, "new_key_location", "&s", &new_key_location);
+
+      /* Validate new_key_location if provided */
+      if (new_key_location != NULL &&
+          !g_str_has_prefix (new_key_location, "file://") &&
+          !g_str_has_prefix (new_key_location, "pkcs11:"))
+        {
+          g_dbus_method_invocation_return_error (invocation,
+                                                 UDISKS_ERROR,
+                                                 UDISKS_ERROR_FAILED,
+                                                 "Invalid new_key_location '%s': must be "
+                                                 "'file://...' or 'pkcs11:...'",
+                                                 new_key_location);
+          goto out;
+        }
+
+      if (!bd_zfs_encryption_change_key (arg_dataset, new_key_location, NULL, &error))
+        {
+          g_dbus_method_invocation_take_error (invocation, error);
+          goto out;
+        }
     }
 
   udisks_linux_module_zfs_trigger_update (object->module);
@@ -3111,6 +3081,7 @@ udisks_linux_pool_object_zfs_update (UDisksLinuxPoolObjectZFS *object,
     BDZFSPropertyInfo **all_props;
     GPtrArray *flags;
     gboolean has_device_trim = FALSE;
+    gboolean has_bookmark = FALSE;
     gboolean maintenance_avail;
 
     flags = g_ptr_array_new ();
@@ -3130,6 +3101,8 @@ udisks_linux_pool_object_zfs_update (UDisksLinuxPoolObjectZFS *object,
 
                 if (g_strcmp0 (p->name, "feature@device_trim") == 0)
                   has_device_trim = TRUE;
+                if (g_strcmp0 (p->name, "feature@bookmarks") == 0)
+                  has_bookmark = TRUE;
               }
 
             bd_zfs_property_info_free (p);
@@ -3152,6 +3125,14 @@ udisks_linux_pool_object_zfs_update (UDisksLinuxPoolObjectZFS *object,
 
     /* CanScrubPause only requires runtime support (same version gate) */
     udisks_zfspool_set_can_scrub_pause (iface, maintenance_avail);
+
+    /* CanEncrypt requires the encryption technology to be available */
+    udisks_zfspool_set_can_encrypt (iface,
+                                    bd_zfs_is_tech_avail (BD_ZFS_TECH_ENCRYPTION,
+                                                          BD_ZFS_TECH_MODE_CREATE, NULL));
+
+    /* CanBookmark requires the feature@bookmarks pool feature */
+    udisks_zfspool_set_can_bookmark (iface, has_bookmark);
   }
 
   g_dbus_interface_skeleton_flush (G_DBUS_INTERFACE_SKELETON (iface));

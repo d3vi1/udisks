@@ -1,0 +1,4 @@
+      <xi:include href="xml/udisks-generated-doc-org.freedesktop.UDisks2.Manager.ZFS.xml"/>
+      <xi:include href="xml/udisks-generated-doc-org.freedesktop.UDisks2.ZFSPool.xml"/>
+      <xi:include href="xml/udisks-generated-doc-org.freedesktop.UDisks2.Block.ZFS.xml"/>
+      <xi:include href="xml/udisks-generated-doc-org.freedesktop.UDisks2.Filesystem.ZFS.xml"/>

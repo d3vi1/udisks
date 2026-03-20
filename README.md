@@ -40,14 +40,14 @@ To configure and install the UDisks, perform following tasks:
     $ ./autogen.sh
 
 Additional functionality of UDisks for monitoring and management is split
-into several modules: *BTRFS, iSCSI, libStorageManagement, LVM2 and LVM
-Cache*. By default, no additional module will be built.
+into several modules: *BTRFS, iSCSI, libStorageManagement, LVM2, LVM
+Cache and ZFS*. By default, no additional module will be built.
 
 To build UDisks with (a) chosen module(s), provide or leave these
 configuration options for the `configure` script:
 
     $ ./configure --enable-btrfs --enable-iscsi --enable-lsm
-                  --enable-lvm2
+                  --enable-lvm2 --enable-zfs
 
 It is possible to enable all the modules at once:
 

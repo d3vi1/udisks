@@ -29,6 +29,7 @@
 #include <src/udiskslogging.h>
 
 #include "udiskszfstypes.h"
+#include "udiskszfsdaemonutil.h"
 #include "udiskslinuxmanagerzfs.h"
 #include "udiskslinuxmodulezfs.h"
 #include "udiskslinuxpoolobjectzfs.h"
@@ -185,89 +186,6 @@ udisks_linux_manager_zfs_get_module (UDisksLinuxManagerZFS *manager)
 
 /* ---------------------------------------------------------------------------------------------------- */
 
-/**
- * resolve_blocks_to_device_paths:
- * @daemon: A #UDisksDaemon.
- * @arg_blocks: NULL-terminated array of D-Bus object paths.
- * @invocation: The method invocation (for error reporting).
- * @out_n_devices: (out): Number of resolved devices.
- *
- * Resolves an array of D-Bus object paths to device paths.
- *
- * Returns: (transfer full): A NULL-terminated array of device path strings,
- *   or %NULL on error (in which case an error has been returned on @invocation).
- *   Free with g_strfreev().
- */
-static gchar **
-resolve_blocks_to_device_paths (UDisksDaemon          *daemon,
-                                const gchar *const    *arg_blocks,
-                                GDBusMethodInvocation *invocation,
-                                guint                 *out_n_devices)
-{
-  guint n;
-  guint count;
-  GPtrArray *devices;
-
-  /* Count the blocks */
-  for (count = 0; arg_blocks != NULL && arg_blocks[count] != NULL; count++)
-    ;
-
-  if (count == 0)
-    {
-      g_dbus_method_invocation_return_error (invocation,
-                                             UDISKS_ERROR,
-                                             UDISKS_ERROR_FAILED,
-                                             "List of block devices is empty");
-      return NULL;
-    }
-
-  devices = g_ptr_array_new_with_free_func (g_free);
-
-  for (n = 0; n < count; n++)
-    {
-      UDisksObject *object = NULL;
-      UDisksBlock *block = NULL;
-
-      object = udisks_daemon_find_object (daemon, arg_blocks[n]);
-      if (object == NULL)
-        {
-          g_dbus_method_invocation_return_error (invocation,
-                                                 UDISKS_ERROR,
-                                                 UDISKS_ERROR_FAILED,
-                                                 "Invalid object path %s at index %u",
-                                                 arg_blocks[n], n);
-          g_ptr_array_unref (devices);
-          return NULL;
-        }
-
-      block = udisks_object_get_block (object);
-      if (block == NULL)
-        {
-          g_dbus_method_invocation_return_error (invocation,
-                                                 UDISKS_ERROR,
-                                                 UDISKS_ERROR_FAILED,
-                                                 "Object path %s at index %u is not a block device",
-                                                 arg_blocks[n], n);
-          g_object_unref (object);
-          g_ptr_array_unref (devices);
-          return NULL;
-        }
-
-      g_ptr_array_add (devices, udisks_block_dup_device (block));
-      g_object_unref (block);
-      g_object_unref (object);
-    }
-
-  g_ptr_array_add (devices, NULL);
-
-  if (out_n_devices != NULL)
-    *out_n_devices = count;
-
-  return (gchar **) g_ptr_array_free (devices, FALSE);
-}
-
-/* ---------------------------------------------------------------------------------------------------- */
-
 typedef struct
 {
   UDisksLinuxModuleZFS *module;
@@ -326,49 +244,15 @@ handle_pool_create (UDisksManagerZFS      *_manager,
       goto out;
     }
 
-  /* ZFS pool names must start with a letter, contain only
-   * alphanumeric characters plus _ - . :, be at most 239 characters,
-   * and not begin with a reserved prefix (mirror, raidz, draid, spare,
-   * log).  These rules mirror what libblockdev/zfs enforce. */
-  {
-    const gchar *p;
-    gboolean valid = TRUE;
-
-    if (strlen (arg_name) > 239)
-      valid = FALSE;
-
-    if (valid && !g_ascii_isalpha (arg_name[0]))
-      valid = FALSE;
-
-    for (p = arg_name; valid && *p != '\0'; p++)
-      {
-        if (!g_ascii_isalnum (*p) && *p != '-' && *p != '_' && *p != '.' && *p != ':')
-          valid = FALSE;
-      }
-
-    if (valid && (g_str_has_prefix (arg_name, "mirror") ||
-                  g_str_has_prefix (arg_name, "raidz") ||
-                  g_str_has_prefix (arg_name, "draid") ||
-                  g_str_has_prefix (arg_name, "spare") ||
-                  g_str_has_prefix (arg_name, "log")))
-      valid = FALSE;
-
-    if (!valid)
-      {
-        g_dbus_method_invocation_return_error (invocation,
-                                               UDISKS_ERROR,
-                                               UDISKS_ERROR_FAILED,
-                                               "Invalid pool name '%s': must start with a letter, "
-                                               "contain only [a-zA-Z0-9_-.:], be at most 239 "
-                                               "characters, and not use reserved prefixes "
-                                               "(mirror, raidz, draid, spare, log)",
-                                               arg_name);
-        goto out;
-      }
-  }
+  /* Validate pool name format via libblockdev */
+  if (!bd_zfs_validate_pool_name (arg_name, &error))
+    {
+      g_dbus_method_invocation_take_error (invocation, error);
+      goto out;
+    }
 
   /* Resolve block object paths to device paths */
-  device_paths = resolve_blocks_to_device_paths (daemon, arg_blocks, invocation, NULL);
+  device_paths = udisks_zfs_resolve_blocks_to_device_paths (daemon, arg_blocks, invocation, NULL);
   if (device_paths == NULL)
     goto out;
 

@@ -223,6 +223,36 @@ udisks_linux_filesystem_zfs_get_module (UDisksLinuxFilesystemZFS *fs_zfs)
 }
 
 /**
+ * set_pool_object_path:
+ * @iface: The #UDisksFilesystemZFS interface to update.
+ * @module: The ZFS module instance.
+ * @pool_name: The pool name to look up.
+ *
+ * Looks up the pool object by name and sets the Pool property on @iface
+ * to the pool's D-Bus object path, or "/" if the pool object is not found.
+ */
+static void
+set_pool_object_path (UDisksFilesystemZFS    *iface,
+                      UDisksLinuxModuleZFS   *module,
+                      const gchar            *pool_name)
+{
+  UDisksLinuxPoolObjectZFS *pool_object;
+
+  pool_object = udisks_linux_module_zfs_find_pool_object (module, pool_name);
+  if (pool_object != NULL)
+    {
+      const gchar *pool_path;
+
+      pool_path = g_dbus_object_get_object_path (G_DBUS_OBJECT (pool_object));
+      udisks_filesystem_zfs_set_pool (iface, pool_path);
+    }
+  else
+    {
+      udisks_filesystem_zfs_set_pool (iface, "/");
+    }
+}
+
+/**
  * udisks_linux_filesystem_zfs_update:
  * @fs_zfs: A #UDisksLinuxFilesystemZFS.
  * @object: The enclosing #UDisksLinuxBlockObject instance.
@@ -242,7 +272,6 @@ udisks_linux_filesystem_zfs_update (UDisksLinuxFilesystemZFS *fs_zfs,
   const gchar *dev_file;
   const gchar *pool_name = NULL;
   const gchar *dataset_name = NULL;
-  UDisksLinuxPoolObjectZFS *pool_object;
 
   device = udisks_linux_block_object_get_device (object);
   dev_file = g_udev_device_get_device_file (device->udev_device);
@@ -262,21 +291,7 @@ udisks_linux_filesystem_zfs_update (UDisksLinuxFilesystemZFS *fs_zfs,
       gchar **parts = g_strsplit (pool_name, "/", 2);
       udisks_filesystem_zfs_set_pool_name (iface, parts[0]);
       udisks_filesystem_zfs_set_dataset_name (iface, pool_name);
-      pool_name = parts[0];
-
-      pool_object = udisks_linux_module_zfs_find_pool_object (fs_zfs->module, pool_name);
-      if (pool_object != NULL)
-        {
-          const gchar *pool_path;
-
-          pool_path = g_dbus_object_get_object_path (G_DBUS_OBJECT (pool_object));
-          udisks_filesystem_zfs_set_pool (iface, pool_path);
-        }
-      else
-        {
-          udisks_filesystem_zfs_set_pool (iface, "/");
-        }
-
+      set_pool_object_path (iface, fs_zfs->module, parts[0]);
       g_strfreev (parts);
     }
   else
@@ -321,20 +336,7 @@ udisks_linux_filesystem_zfs_update (UDisksLinuxFilesystemZFS *fs_zfs,
               gchar *pname = g_strndup (zvol_path, slash - zvol_path);
               udisks_filesystem_zfs_set_pool_name (iface, pname);
               udisks_filesystem_zfs_set_dataset_name (iface, zvol_path);
-
-              pool_object = udisks_linux_module_zfs_find_pool_object (fs_zfs->module, pname);
-              if (pool_object != NULL)
-                {
-                  const gchar *pool_path;
-
-                  pool_path = g_dbus_object_get_object_path (G_DBUS_OBJECT (pool_object));
-                  udisks_filesystem_zfs_set_pool (iface, pool_path);
-                }
-              else
-                {
-                  udisks_filesystem_zfs_set_pool (iface, "/");
-                }
-
+              set_pool_object_path (iface, fs_zfs->module, pname);
               g_free (pname);
             }
           else
@@ -342,19 +344,7 @@ udisks_linux_filesystem_zfs_update (UDisksLinuxFilesystemZFS *fs_zfs,
               /* No slash: the path is just the pool name */
               udisks_filesystem_zfs_set_pool_name (iface, zvol_path);
               udisks_filesystem_zfs_set_dataset_name (iface, zvol_path);
-
-              pool_object = udisks_linux_module_zfs_find_pool_object (fs_zfs->module, zvol_path);
-              if (pool_object != NULL)
-                {
-                  const gchar *pool_path;
-
-                  pool_path = g_dbus_object_get_object_path (G_DBUS_OBJECT (pool_object));
-                  udisks_filesystem_zfs_set_pool (iface, pool_path);
-                }
-              else
-                {
-                  udisks_filesystem_zfs_set_pool (iface, "/");
-                }
+              set_pool_object_path (iface, fs_zfs->module, zvol_path);
             }
         }
       else
@@ -369,39 +359,14 @@ udisks_linux_filesystem_zfs_update (UDisksLinuxFilesystemZFS *fs_zfs,
                   gchar *pname = g_strndup (dataset_name, slash - dataset_name);
                   udisks_filesystem_zfs_set_pool_name (iface, pname);
                   udisks_filesystem_zfs_set_dataset_name (iface, dataset_name);
-
-                  pool_object = udisks_linux_module_zfs_find_pool_object (fs_zfs->module, pname);
-                  if (pool_object != NULL)
-                    {
-                      const gchar *pool_path;
-
-                      pool_path = g_dbus_object_get_object_path (G_DBUS_OBJECT (pool_object));
-                      udisks_filesystem_zfs_set_pool (iface, pool_path);
-                    }
-                  else
-                    {
-                      udisks_filesystem_zfs_set_pool (iface, "/");
-                    }
-
+                  set_pool_object_path (iface, fs_zfs->module, pname);
                   g_free (pname);
                 }
               else
                 {
                   udisks_filesystem_zfs_set_pool_name (iface, dataset_name);
                   udisks_filesystem_zfs_set_dataset_name (iface, dataset_name);
-
-                  pool_object = udisks_linux_module_zfs_find_pool_object (fs_zfs->module, dataset_name);
-                  if (pool_object != NULL)
-                    {
-                      const gchar *pool_path;
-
-                      pool_path = g_dbus_object_get_object_path (G_DBUS_OBJECT (pool_object));
-                      udisks_filesystem_zfs_set_pool (iface, pool_path);
-                    }
-                  else
-                    {
-                      udisks_filesystem_zfs_set_pool (iface, "/");
-                    }
+                  set_pool_object_path (iface, fs_zfs->module, dataset_name);
                 }
             }
           else

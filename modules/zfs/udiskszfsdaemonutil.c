@@ -28,9 +28,14 @@
 /**
  * SECTION:udiskszfsdaemonutil
  * @title: ZFS Daemon Utilities
- * @short_description: Property allowlist enforcement for ZFS operations
+ * @short_description: Shared utilities for the ZFS module
  *
- * Utility functions that enforce a property allowlist for ZFS pool and
+ * Utility functions shared across ZFS module source files.  This
+ * includes:
+ *
+ *  - **Block-object-path resolvers** that convert D-Bus object paths
+ *    into device paths (e.g. `/dev/sda`).
+ *  - **Property allowlist enforcement** for ZFS pool and
  * dataset property modifications.  Properties are divided into two tiers:
  *
  *  - **Safe properties** require only `manage-zfs` polkit authorization.
@@ -88,6 +93,7 @@ static const gchar * const sensitive_properties[] =
   "overlay",
   "acltype",
   "xattr",
+  "readonly",
   NULL
 };
 
@@ -244,6 +250,45 @@ udisks_zfs_property_is_allowed (const gchar  *property,
   return FALSE;
 }
 
+/* Properties that are query-sensitive — reading them reveals
+ * encryption configuration details, so reading requires manage-zfs
+ * (not just query) authorization. */
+static const gchar * const query_sensitive_properties[] =
+{
+  "keylocation",
+  "cachefile",
+  "keystatus",
+  "keyformat",
+  "encryptionroot",
+  NULL
+};
+
+/**
+ * udisks_zfs_property_is_query_sensitive:
+ * @property: A ZFS property name.
+ *
+ * Checks whether reading @property should require elevated
+ * (manage-zfs) authorization rather than the default query tier.
+ * Properties in this list reveal sensitive encryption metadata.
+ *
+ * Returns: %TRUE if @property is query-sensitive.
+ */
+gboolean
+udisks_zfs_property_is_query_sensitive (const gchar *property)
+{
+  guint i;
+
+  g_return_val_if_fail (property != NULL, FALSE);
+
+  for (i = 0; query_sensitive_properties[i] != NULL; i++)
+    {
+      if (g_strcmp0 (property, query_sensitive_properties[i]) == 0)
+        return TRUE;
+    }
+
+  return FALSE;
+}
+
 /**
  * udisks_zfs_validate_name_in_pool:
  * @pool_name: The pool name.
@@ -297,4 +342,142 @@ udisks_zfs_validate_name_in_pool (const gchar  *pool_name,
                name, pool_name);
 
   return FALSE;
+}
+
+/* ---------------------------------------------------------------------------------------------------- */
+/*  Block-object-path resolvers                                                                          */
+/* ---------------------------------------------------------------------------------------------------- */
+
+/**
+ * udisks_zfs_resolve_blocks_to_device_paths:
+ * @daemon: A #UDisksDaemon.
+ * @arg_blocks: NULL-terminated array of D-Bus object paths.
+ * @invocation: The method invocation (for error reporting).
+ * @out_n_devices: (out) (optional): Number of resolved devices, or %NULL.
+ *
+ * Resolves an array of D-Bus object paths to device path strings.
+ *
+ * Returns: (transfer full): A NULL-terminated array of device path strings,
+ *   or %NULL on error (in which case an error has been returned on @invocation).
+ *   Free with g_strfreev().
+ */
+gchar **
+udisks_zfs_resolve_blocks_to_device_paths (UDisksDaemon          *daemon,
+                                            const gchar *const    *arg_blocks,
+                                            GDBusMethodInvocation *invocation,
+                                            guint                 *out_n_devices)
+{
+  guint n;
+  guint count;
+  GPtrArray *devices;
+
+  /* Count the blocks */
+  for (count = 0; arg_blocks != NULL && arg_blocks[count] != NULL; count++)
+    ;
+
+  if (count == 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "List of block devices is empty");
+      return NULL;
+    }
+
+  devices = g_ptr_array_new_with_free_func (g_free);
+
+  for (n = 0; n < count; n++)
+    {
+      UDisksObject *object = NULL;
+      UDisksBlock *block = NULL;
+
+      object = udisks_daemon_find_object (daemon, arg_blocks[n]);
+      if (object == NULL)
+        {
+          g_dbus_method_invocation_return_error (invocation,
+                                                 UDISKS_ERROR,
+                                                 UDISKS_ERROR_FAILED,
+                                                 "Invalid object path %s at index %u",
+                                                 arg_blocks[n], n);
+          g_ptr_array_unref (devices);
+          return NULL;
+        }
+
+      block = udisks_object_get_block (object);
+      if (block == NULL)
+        {
+          g_dbus_method_invocation_return_error (invocation,
+                                                 UDISKS_ERROR,
+                                                 UDISKS_ERROR_FAILED,
+                                                 "Object path %s at index %u is not a block device",
+                                                 arg_blocks[n], n);
+          g_object_unref (object);
+          g_ptr_array_unref (devices);
+          return NULL;
+        }
+
+      g_ptr_array_add (devices, udisks_block_dup_device (block));
+      g_object_unref (block);
+      g_object_unref (object);
+    }
+
+  g_ptr_array_add (devices, NULL);
+
+  if (out_n_devices != NULL)
+    *out_n_devices = count;
+
+  return (gchar **) g_ptr_array_free (devices, FALSE);
+}
+
+/**
+ * udisks_zfs_resolve_block_to_device_path:
+ * @daemon: A #UDisksDaemon.
+ * @object_path: A single D-Bus object path.
+ * @invocation: The method invocation (for error reporting).
+ *
+ * Resolves a single D-Bus object path to a device path string.
+ * This is the single-object convenience wrapper around
+ * udisks_zfs_resolve_blocks_to_device_paths().
+ *
+ * Returns: (transfer full): The device path string (e.g. "/dev/sda"),
+ *   or %NULL on error (in which case an error has been returned on @invocation).
+ *   Free with g_free().
+ */
+gchar *
+udisks_zfs_resolve_block_to_device_path (UDisksDaemon          *daemon,
+                                          const gchar           *object_path,
+                                          GDBusMethodInvocation *invocation)
+{
+  UDisksObject *obj = NULL;
+  UDisksBlock *block = NULL;
+  gchar *device_path = NULL;
+
+  obj = udisks_daemon_find_object (daemon, object_path);
+  if (obj == NULL)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Invalid object path %s",
+                                             object_path);
+      return NULL;
+    }
+
+  block = udisks_object_get_block (obj);
+  if (block == NULL)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             UDISKS_ERROR,
+                                             UDISKS_ERROR_FAILED,
+                                             "Object path %s is not a block device",
+                                             object_path);
+      g_object_unref (obj);
+      return NULL;
+    }
+
+  device_path = udisks_block_dup_device (block);
+  g_object_unref (block);
+  g_object_unref (obj);
+
+  return device_path;
 }

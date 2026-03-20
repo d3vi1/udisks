@@ -21,8 +21,20 @@
 #define __UDISKS_ZFS_DAEMON_UTIL_H__
 
 #include <glib.h>
+#include <gio/gio.h>
+
+#include <src/udisksdaemon.h>
 
 G_BEGIN_DECLS
+
+gchar **udisks_zfs_resolve_blocks_to_device_paths (UDisksDaemon          *daemon,
+                                                     const gchar *const    *arg_blocks,
+                                                     GDBusMethodInvocation *invocation,
+                                                     guint                 *out_n_devices);
+
+gchar  *udisks_zfs_resolve_block_to_device_path   (UDisksDaemon          *daemon,
+                                                     const gchar           *object_path,
+                                                     GDBusMethodInvocation *invocation);
 
 gboolean udisks_zfs_property_is_safe    (const gchar  *property,
                                           GError      **error);
@@ -31,6 +43,8 @@ gboolean udisks_zfs_property_is_allowed (const gchar  *property,
                                           GError      **error);
 
 gboolean udisks_zfs_property_is_pool_only (const gchar *property);
+
+gboolean udisks_zfs_property_is_query_sensitive (const gchar *property);
 
 gboolean udisks_zfs_validate_name_in_pool (const gchar  *pool_name,
                                             const gchar  *name,

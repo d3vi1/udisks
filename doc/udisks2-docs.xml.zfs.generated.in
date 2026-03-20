@@ -1,0 +1,4 @@
+      <xi:include href="../doc/xml/UDisksManagerZFS.xml"/>
+      <xi:include href="../doc/xml/UDisksZFSPool.xml"/>
+      <xi:include href="../doc/xml/UDisksBlockZFS.xml"/>
+      <xi:include href="../doc/xml/UDisksFilesystemZFS.xml"/>

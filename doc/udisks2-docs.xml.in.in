@@ -384,6 +384,7 @@
       <!-- LVM2_DBUS_INTERFACE -->
       <!-- ISCSI_DBUS_INTERFACE -->
       <!-- BTRFS_DBUS_INTERFACE -->
+      <!-- ZFS_DBUS_INTERFACE -->
     </chapter>
   </part>
 
@@ -416,6 +417,7 @@
       <!-- LVM2_GENERATED_CODE -->
       <!-- ISCSI_GENERATED_CODE -->
       <!-- BTRFS_GENERATED_CODE -->
+      <!-- ZFS_GENERATED_CODE -->
     </chapter>
   </part>
 

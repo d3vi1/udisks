@@ -143,6 +143,15 @@
 
     <property name="Name" type="s" access="read"/>
     <property name="GUID" type="s" access="read"/>
+
+    <!--
+        State:
+
+        The pool's running state as reported by OpenZFS (e.g.
+        <literal>"ONLINE"</literal>, <literal>"DEGRADED"</literal>,
+        <literal>"FAULTED"</literal>).  This is the same underlying
+        value exposed by the #Health property.
+    -->
     <property name="State" type="s" access="read"/>
     <property name="Size" type="t" access="read"/>
     <property name="Allocated" type="t" access="read"/>
@@ -151,6 +160,16 @@
     <property name="DedupRatio" type="d" access="read"/>
     <property name="ReadOnly" type="b" access="read"/>
     <property name="Altroot" type="s" access="read"/>
+
+    <!--
+        Health:
+
+        An alias for #State — both properties expose the same
+        OpenZFS pool health value (e.g.
+        <literal>"ONLINE"</literal>, <literal>"DEGRADED"</literal>).
+        Retained for compatibility with clients that expect a
+        <literal>Health</literal> property name.
+    -->
     <property name="Health" type="s" access="read"/>
     <!--
         FeatureFlags:
@@ -183,6 +202,24 @@
         <literal>zpool scrub -p</literal> (0.8.0+).
     -->
     <property name="CanScrubPause" type="b" access="read"/>
+
+    <!--
+        CanEncrypt:
+
+        %TRUE when the installed OpenZFS version supports native
+        encryption (0.8.0+) and the <literal>encryption</literal>
+        technology is available via libblockdev.
+    -->
+    <property name="CanEncrypt" type="b" access="read"/>
+
+    <!--
+        CanBookmark:
+
+        %TRUE when the pool has the
+        <literal>feature@bookmarks</literal> feature active or enabled,
+        indicating that bookmark operations are supported.
+    -->
+    <property name="CanBookmark" type="b" access="read"/>
 
     <property name="ScrubRunning" type="b" access="read"/>
     <property name="ScrubPaused" type="b" access="read"/>
@@ -258,7 +295,7 @@
     <!--
         ReplaceVdev:
         @old_device: The device name of the vdev to replace.
-        @new_device: The device name of the replacement.
+        @new_device: Object path of the replacement block device (implementing #org.freedesktop.UDisks2.Block).
         @force: If %TRUE, force the replacement.
         @options: Additional options.
 
@@ -266,7 +303,7 @@
     -->
     <method name="ReplaceVdev">
       <arg name="old_device" direction="in" type="s"/>
-      <arg name="new_device" direction="in" type="s"/>
+      <arg name="new_device" direction="in" type="o"/>
       <arg name="force" direction="in" type="b"/>
       <arg name="options" direction="in" type="a{sv}"/>
     </method>
@@ -274,14 +311,14 @@
     <!--
         AttachVdev:
         @existing_device: The device name of an existing vdev.
-        @new_device: The device name to attach as a mirror leg.
+        @new_device: Object path of the replacement block device (implementing #org.freedesktop.UDisks2.Block).
         @options: Additional options.
 
         Attaches a new device to an existing vdev, creating or extending a mirror.
     -->
     <method name="AttachVdev">
       <arg name="existing_device" direction="in" type="s"/>
-      <arg name="new_device" direction="in" type="s"/>
+      <arg name="new_device" direction="in" type="o"/>
       <arg name="options" direction="in" type="a{sv}"/>
     </method>
 
@@ -734,6 +771,27 @@
         @options: Additional options.
 
         Loads the encryption key for a dataset.
+
+        Known options:
+          <variablelist>
+            <varlistentry>
+              <term>passphrase (type 'ay')</term>
+              <listitem><para>
+                The passphrase as a byte array.  If provided, the key
+                is loaded directly from this value.  The daemon zeros
+                the memory after use.
+              </para></listitem>
+            </varlistentry>
+            <varlistentry>
+              <term>key_location (type 's')</term>
+              <listitem><para>
+                A key location URI: <literal>"prompt"</literal>,
+                <literal>"file://..."</literal>, or
+                <literal>"pkcs11:..."</literal>.  Used only when
+                @passphrase is not provided.
+              </para></listitem>
+            </varlistentry>
+          </variablelist>
     -->
     <method name="LoadKey">
       <arg name="dataset" direction="in" type="s"/>
@@ -746,6 +804,8 @@
         @options: Additional options.
 
         Unloads the encryption key for a dataset.
+
+        No method-specific options.
     -->
     <method name="UnloadKey">
       <arg name="dataset" direction="in" type="s"/>
@@ -758,6 +818,30 @@
         @options: Additional options.
 
         Changes the encryption key for a dataset.
+
+        Known options:
+          <variablelist>
+            <varlistentry>
+              <term>passphrase (type 'ay')</term>
+              <listitem><para>
+                The new passphrase as a byte array.  When provided, the
+                key location is set to <literal>"prompt"</literal> and the
+                passphrase is piped to <literal>zfs change-key</literal>
+                via stdin.  The daemon zeros the memory after use.
+                Takes priority over @new_key_location.
+              </para></listitem>
+            </varlistentry>
+            <varlistentry>
+              <term>new_key_location (type 's')</term>
+              <listitem><para>
+                New key location URI:
+                <literal>"file://..."</literal> or
+                <literal>"pkcs11:..."</literal>.  If neither
+                @passphrase nor @new_key_location is provided, the key
+                is inherited from the parent dataset.
+              </para></listitem>
+            </varlistentry>
+          </variablelist>
     -->
     <method name="ChangeKey">
       <arg name="dataset" direction="in" type="s"/>

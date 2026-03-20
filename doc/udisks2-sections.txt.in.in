@@ -1038,6 +1038,8 @@ udisks_loop_skeleton_get_type
 
 <!-- BTRFS_GENERATED_SECTIONS -->
 
+<!-- ZFS_GENERATED_SECTIONS -->
+
 <SECTION>
 <FILE>UDisksPartition</FILE>
 UDisksPartition
