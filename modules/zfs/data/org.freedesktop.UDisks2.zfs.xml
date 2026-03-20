@@ -636,7 +636,11 @@
     <!--
         CloneSnapshot:
         @snapshot: The snapshot name to clone.
-        @clone_name: The name for the clone.
+        @clone_name: The name for the clone.  A bare name (no
+          <literal>/</literal>) is automatically qualified as
+          <literal>pool/clone_name</literal>.  A fully-qualified
+          name (containing <literal>/</literal>) is used as-is but
+          must belong to this pool.
         @options: Additional options.
         @result: The full clone name.
 
@@ -652,7 +656,11 @@
     <!--
         RenameDataset:
         @name: The dataset name to rename.
-        @new_name: The new name for the dataset.
+        @new_name: The new name for the dataset.  A bare name (no
+          <literal>/</literal>) is automatically qualified as
+          <literal>pool/new_name</literal>.  A fully-qualified
+          name (containing <literal>/</literal>) is used as-is but
+          must belong to this pool.
         @options: Additional options.
 
         Renames a ZFS dataset.
@@ -806,7 +814,11 @@
     <!--
         CreateBookmark:
         @snapshot: The snapshot name to bookmark.
-        @bookmark: The bookmark name.
+        @bookmark: The bookmark name.  A bare name (no
+          <literal>/</literal>) is automatically qualified as
+          <literal>pool/bookmark</literal>.  A fully-qualified
+          name (containing <literal>/</literal>) is used as-is but
+          must belong to this pool.
         @options: Additional options.
 
         Creates a bookmark from a snapshot (zfs bookmark).
